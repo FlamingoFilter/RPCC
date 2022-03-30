@@ -4,17 +4,21 @@ const Diagnostics = require('Diagnostics');
 const Multipeer = require('Multipeer');
 const Participants = require('Participants');
 const State = require('spark-state');
+const Time = require('Time');
+
+function print(obj){
+  Diagnostics.log(JSON.stringify(obj))
+}
 
 (async function () { // Enable async/await in JS [part 1]
 
-  // Initialize background count constant
-  const totalBackgroundCount = 3;
-
-  // Define a new global scalar signal for the background index
-  const backgroundIndex = await State.createGlobalScalarSignal(0, 'backgroundIndex');
-
   // Define a new global scalar signal for the turn index
   const turnIndex = await State.createGlobalScalarSignal(0, 'turnIndex');
+
+  const round = await State.createGlobalScalarSignal(0, 'round');
+
+  const scores = await State.createGlobalPeersMap(0, 'scores')
+  const moves = await State.createGlobalPeersMap(0, 'moves')
 
   // Get the tap event from the Patch Editor
   const screenTapPulse = await Patches.outputs.getPulse('screenTapPulse');
@@ -24,6 +28,8 @@ const State = require('spark-state');
 
   // Get the other call participants
   const participants = await Participants.getAllOtherParticipants();
+
+  const myId = (await Participants.self).id
 
   // Get the current participant, 'self'
   const self = await Participants.self;
@@ -77,40 +83,51 @@ const State = require('spark-state');
   // turn indicator
   setTurnIndicatorVisibility();
 
+  let selection = "Chicken"
+
   // Subscribe to the screen tap event
   screenTapPulse.subscribe(() => {
 
-    // If it's currently my turn
-    if (activeParticipants[turnIndex.pinLastValue()].id === self.id) {
-      // Increment the background index to show the next background image
-      let currentBackgroundIndex = (backgroundIndex.pinLastValue() + 1) % totalBackgroundCount;
-
-      // Set the global variable to the new value
-      backgroundIndex.set(currentBackgroundIndex);
+    // switch selection
+    if(selection == "Chicken"){
+      selection = "Rock"
+    }
+    else if(selection == "Rock"){
+      selection = "Paper"
+    }
+    else if(selection == "Paper"){
+      selection = "Cissors"
+    }
+    else if(selection == "Cissors"){
+      selection = "Chicken"
     }
 
+    Diagnostics.log("Currently selecting " + selection);
+    
   });
+
+  let roundIsFinished = true
 
   // Subscribe to the tap and hold event
   screenTapHoldPulse.subscribe(function() {
-
-    // If it's currently my turn
-    if (activeParticipants[turnIndex.pinLastValue()].id === self.id) {
-
-      // Increment the turn index to pass the turn over to the next participant
-      let currentTurnIndex = (turnIndex.pinLastValue() + 1) % activeParticipants.length;
-
-      // Set the global variable to the new value
-      turnIndex.set(currentTurnIndex);
+    if (roundIsFinished) {
+      round.set(round.pinLastValue() + 1);
     }
-
   });
 
-  // Monitor our global background signal
-  backgroundIndex.monitor().subscribe((event) => {
+  round.monitor().subscribe((event) => {
+    roundIsFinished = false
+    Diagnostics.log("Starting round " + round.pinLastValue());
 
-    // Send the value to the Patch Editor
-    Patches.inputs.setScalar('msg_background', backgroundIndex.pinLastValue());
+    // Starts a 3 seconds timer
+    let timer = Time.setTimeout(function() {
+      Diagnostics.log("3 seconds passed !")
+      roundIsFinished = true;
+
+      (async function () {
+        Diagnostics.log("Played " + selection + " with current score of " + (await scores.get(myId)).pinLastValue());
+      })();
+    }, 3000);
   });
 
   // Whenever the turn index changes, update the local turn index
