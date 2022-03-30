@@ -28,21 +28,35 @@ const Time = require('Time');
     Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     
     let allMovesWereDownloaded = true
+    let myMove
+    let allOtherMoves = []
+
     // Check to see if all moves were downloaded
     onEachId((id) => {
-      let move = moves.get(id)
-      if(move == ""){
-        allMovesWereDownloaded = false
-      }
-      else Diagnostics.log(id + " played " + move)
+      (async function () {
+        let move = (await moves.get(id)).pinLastValue()
+        if(self.id != id) allOtherMoves.push(move)
+        else myMove = move
+        if(move == ""){
+          allMovesWereDownloaded = false
+        }
+      })();
     }).then(() => {
       Diagnostics.log(allMovesWereDownloaded ? "All moves downloaded !" : "Not all moves downloaded yet...");
+      if(allMovesWereDownloaded){
+        let pointsObtained = computeScoreChange(myMove,allOtherMoves)
+        Diagnostics.log("Points obtained : " + pointsObtained);
+        (async function () {
+          (await scores.get(self.id)).increment(pointsObtained);
+        })();
+      }
     })
 
   };
 
   moves.setOnNewPeerCallback(function(id){
     (async function () {
+      Diagnostics.log("New participant ID : " + id);
       (await moves.get(id)).monitor().subscribe((event) => {
         onSomeoneMoved(id,event)
       });
@@ -52,7 +66,39 @@ const Time = require('Time');
   const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
   const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
 
+  function computeScoreChange(myMove, allOtherMoves){
+    let scoreChange = 0
+    let allTheOthersPlayedChicken = true
 
+    for(let i = 0; i < allOtherMoves.length; i++){
+      let otherMove = allOtherMoves[i]
+
+      if(otherMove != "Chicken") allTheOthersPlayedChicken = false
+
+      if(myMove == "Rock"){
+        if      (otherMove == "Rock")    {} 
+        else if (otherMove == "Paper")   scoreChange--
+        else if (otherMove == "Cissors") scoreChange++
+      }
+      else if(myMove == "Paper"){
+        if      (otherMove == "Rock")    scoreChange++ 
+        else if (otherMove == "Paper")   {}
+        else if (otherMove == "Cissors") scoreChange--
+      }
+      else if(myMove == "Cissors"){
+        if      (otherMove == "Rock")    scoreChange-- 
+        else if (otherMove == "Paper")   scoreChange++
+        else if (otherMove == "Cissors") {}
+      }
+    }
+
+    // Extra rule : if you don't play chicken, but all the others do, you win something
+    if(myMove != "Chicken" && allTheOthersPlayedChicken){
+      scoreChange++
+    }
+
+    return scoreChange
+  }
 
   let selection = "Chicken"
 
