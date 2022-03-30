@@ -11,6 +11,9 @@ const Time = require('Time');
   // Get the current participant, 'self'
   const self = await Participants.self;
 
+  const screenTapPulse = await Patches.outputs.getPulse('screenTapPulse');
+  const startRound     = await Patches.outputs.getPulse('startRound');
+
   const round = await State.createGlobalScalarSignal(0, 'round');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
@@ -106,7 +109,6 @@ const Time = require('Time');
 
   let selection = "Chicken"
 
-  const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
   screenTapPulse.subscribe(() => {
     // switch selection
     if     (selection == "Chicken") selection = "Rock"
@@ -117,8 +119,7 @@ const Time = require('Time');
   });
 
   let roundIsFinished = true
-  const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
-  screenTapHoldPulse.subscribe(function() {
+  startRound.subscribe(function() {
     if (roundIsFinished) {
       round.set(round.pinLastValue() + 1);
     }
