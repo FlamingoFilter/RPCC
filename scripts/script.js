@@ -48,9 +48,15 @@ const Time = require('Time');
       moves.set(self.id,selection);
 
       (async function () {
-        Diagnostics.log("Played " + selection + " with current score of " + (await scores.get(self.id)).pinLastValue());
+        Diagnostics.log("Played '" + selection + "' with current score of " + (await scores.get(self.id)).pinLastValue());
       })();
     }, 3000);
   });
+
+  (async function () {
+    (await moves.get(self.id)).monitor().subscribe((event) => {
+      Diagnostics.log("My move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    });
+  })();
 
 })(); // Enable async/await in JS [part 2]
