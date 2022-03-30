@@ -8,12 +8,37 @@ const Time = require('Time');
 
 (async function () { // Enable async/await in JS [part 1]
 
+  // Get the current participant, 'self'
+  const self = await Participants.self;
+
   const round = await State.createGlobalScalarSignal(0, 'round');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
 
+  let onEachId = async function(funct){
+    const participants = await Participants.getAllOtherParticipants();
+    participants.push(self);
+
+    for(let key in participants){
+      funct(participants[key].id)
+    }
+  }
+
   let onSomeoneMoved = function(id, event){
     Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    
+    let allMovesWereDownloaded = true
+    // Check to see if all moves were downloaded
+    onEachId((id) => {
+      let move = moves.get(id)
+      if(move == ""){
+        allMovesWereDownloaded = false
+      }
+      else Diagnostics.log(id + " played " + move)
+    }).then(() => {
+      Diagnostics.log(allMovesWereDownloaded ? "All moves downloaded !" : "Not all moves downloaded yet...");
+    })
+
   };
 
   moves.setOnNewPeerCallback(function(id){
@@ -27,8 +52,7 @@ const Time = require('Time');
   const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
   const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
 
-  // Get the current participant, 'self'
-  const self = await Participants.self;
+
 
   let selection = "Chicken"
 
