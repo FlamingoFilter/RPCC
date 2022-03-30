@@ -12,6 +12,18 @@ const Time = require('Time');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
 
+  let onSomeoneMoved = function(id, event){
+    Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+  };
+
+  moves.setOnNewPeerCallback(function(id){
+    (async function () {
+      (await moves.get(id)).monitor().subscribe((event) => {
+        onSomeoneMoved(id,event)
+      });
+    })();
+  });
+
   const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
   const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
 
@@ -53,10 +65,18 @@ const Time = require('Time');
     }, 3000);
   });
 
-  (async function () {
-    (await moves.get(self.id)).monitor().subscribe((event) => {
-      Diagnostics.log("My move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
-    });
-  })();
+  // Get the other call participants
+  const participants = await Participants.getAllOtherParticipants();
+  participants.push(self);
 
+  for(let key in participants){
+    Diagnostics.log("Participant ID : " + participants[key].id);
+    (async function () {
+      (await moves.get(participants[key].id)).monitor().subscribe((event) => {
+        onSomeoneMoved(participants[key].id,event)
+      });
+    })();
+  }
+
+  Diagnostics.log("Game loaded !")
 })(); // Enable async/await in JS [part 2]
