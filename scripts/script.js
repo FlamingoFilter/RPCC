@@ -25,7 +25,8 @@ const Time = require('Time');
   }
 
   let onSomeoneMoved = function(id, event){
-    Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
     
     let allMovesWereDownloaded = true
     let allMovesAreEmpty = true
