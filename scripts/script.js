@@ -28,6 +28,7 @@ const Time = require('Time');
     Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     
     let allMovesWereDownloaded = true
+    let allMovesAreEmpty = true
     let myMove
     let allOtherMoves = []
 
@@ -40,16 +41,21 @@ const Time = require('Time');
         if(move == ""){
           allMovesWereDownloaded = false
         }
+        else {
+          allMovesAreEmpty = false
+        }
       })();
     }).then(() => {
-      Diagnostics.log(allMovesWereDownloaded ? "All moves downloaded !" : "Not all moves downloaded yet...");
+      // Diagnostics.log(allMovesWereDownloaded ? "All moves downloaded !" : "Not all moves downloaded yet...");
       if(allMovesWereDownloaded){
         let pointsObtained = computeScoreChange(myMove,allOtherMoves)
         Diagnostics.log("Points obtained : " + pointsObtained);
         (async function () {
           (await scores.get(self.id)).increment(pointsObtained);
+          moves.set(self.id,"");
         })();
       }
+      if(allMovesAreEmpty) roundIsFinished = true
     })
 
   };
@@ -62,9 +68,6 @@ const Time = require('Time');
       });
     })();
   });
-
-  const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
-  const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
 
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
@@ -102,6 +105,7 @@ const Time = require('Time');
 
   let selection = "Chicken"
 
+  const screenTapPulse     = await Patches.outputs.getPulse('screenTapPulse');
   screenTapPulse.subscribe(() => {
     // switch selection
     if     (selection == "Chicken") selection = "Rock"
@@ -112,9 +116,13 @@ const Time = require('Time');
   });
 
   let roundIsFinished = true
+  const screenTapHoldPulse = await Patches.outputs.getPulse('screenTapHoldPulse');
   screenTapHoldPulse.subscribe(function() {
     if (roundIsFinished) {
       round.set(round.pinLastValue() + 1);
+    }
+    else {
+      Diagnostics.log("Cannot start a new round because a round has started and all moves are not empty again.");
     }
   });
 
@@ -122,16 +130,12 @@ const Time = require('Time');
     roundIsFinished = false
     Diagnostics.log("Starting round " + round.pinLastValue());
 
+    // TODO Add a visual round animation
+
     // Starts a 3 seconds timer
     let timer = Time.setTimeout(function() {
-      Diagnostics.log("3 seconds passed !")
-      roundIsFinished = true;
-
+      Diagnostics.log("3 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
-
-      (async function () {
-        Diagnostics.log("Played '" + selection + "' with current score of " + (await scores.get(self.id)).pinLastValue());
-      })();
     }, 3000);
   });
 
