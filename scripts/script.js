@@ -92,20 +92,9 @@ const Reactive = require('Reactive');
     }
   }
 
-  moves.setOnNewPeerCallback(function(id){
-    (async function () {
-      Diagnostics.log("New participant ID : " + id);
-      (await moves.get(id)).monitor().subscribe((event) => {
-        onSomeoneMoved(id,event)
-      });
-      (await scores.get(id)).monitor().subscribe((event) => {
-        onSomeoneScored(id,event)
-      });
-      (await noPointsMade.get(id)).monitor().subscribe((event) => {
-        onSomeoneScored(id,null)
-      });
-    })();
-  });
+  moves.setOnNewPeerCallback(       function(id){(async function () {(await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved (id, event)});})();});
+  scores.setOnNewPeerCallback(      function(id){(async function () {(await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(id, event)});})();});
+  noPointsMade.setOnNewPeerCallback(function(id){(async function () {(await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(id, null )});})();});
 
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
