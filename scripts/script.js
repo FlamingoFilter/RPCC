@@ -76,6 +76,8 @@ const Reactive = require('Reactive');
     
     if(event)
       Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    if(id == self.id)
+      Patches.inputs.setString('score', event.newValue.toString());
 
     scoresToReceiveBeforeAllowingNewRound--
     if(scoresToReceiveBeforeAllowingNewRound <= 0){
@@ -114,22 +116,22 @@ const Reactive = require('Reactive');
       if(myMove == "Rock"){
         if      (otherMove == "Rock")    {} 
         else if (otherMove == "Paper")   scoreChange--
-        else if (otherMove == "Cissors") scoreChange++
+        else if (otherMove == "Scissors") scoreChange++
       }
       else if(myMove == "Paper"){
         if      (otherMove == "Rock")    scoreChange++ 
         else if (otherMove == "Paper")   {}
-        else if (otherMove == "Cissors") scoreChange--
+        else if (otherMove == "Scissors") scoreChange--
       }
-      else if(myMove == "Cissors"){
+      else if(myMove == "Scissors"){
         if      (otherMove == "Rock")    scoreChange-- 
         else if (otherMove == "Paper")   scoreChange++
-        else if (otherMove == "Cissors") {}
+        else if (otherMove == "Scissors") {}
       }
     }
 
     // Extra rule : if you don't play chicken, but all the others do, you win something
-    if(myMove != "Chicken" && allTheOthersPlayedChicken){
+    if(myMove != "Chicken" && allTheOthersPlayedChicken && allOtherMoves.length > 0){
       scoreChange++
     }
 
@@ -186,5 +188,6 @@ const Reactive = require('Reactive');
     })();
   }
 
+  Patches.inputs.setString('score', "0");
   Diagnostics.log("Game loaded !")
 })(); // Enable async/await in JS [part 2]
