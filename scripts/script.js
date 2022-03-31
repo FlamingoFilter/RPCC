@@ -5,6 +5,7 @@ const Multipeer = require('Multipeer');
 const Participants = require('Participants');
 const State = require('spark-state');
 const Time = require('Time');
+const Reactive = require('Reactive');
 
 (async function () { // Enable async/await in JS [part 1]
 
@@ -72,6 +73,7 @@ const Time = require('Time');
     scoresToReceiveBeforeAllowingNewRound--
     if(scoresToReceiveBeforeAllowingNewRound <= 0){
       scoresToReceiveBeforeAllowingNewRound = 0
+      Patches.inputs.setPulse('roundFinished', Reactive.once());
       roundIsFinished = true
       Diagnostics.log("New round allowed !")
       moves.set(self.id,"");
@@ -151,6 +153,7 @@ const Time = require('Time');
   round.monitor().subscribe((event) => {
     roundIsFinished = false
     Diagnostics.log("Starting round " + round.pinLastValue() + ".");
+    Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
       // Get the other call participants
@@ -159,11 +162,9 @@ const Time = require('Time');
       scoresToReceiveBeforeAllowingNewRound = participants.length + 1
     })();
 
-    // TODO Add a visual round animation
-
-
     // Starts a 3 seconds timer
     let timer = Time.setTimeout(function() {
+      Patches.inputs.setPulse('waitingForResults', Reactive.once());
       Diagnostics.log("3 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
     }, 3000);
