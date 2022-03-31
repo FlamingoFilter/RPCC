@@ -12,10 +12,10 @@ const Reactive = require('Reactive');
   // Get the current participant, 'self'
   const self = await Participants.self;
 
-  const round = await State.createGlobalScalarSignal(0, 'round');
-  const noPointsMade = await State.createGlobalScalarSignal(0, 'noPointsMade');
-  const scores = await State.createGlobalPeersMap(0, 'scores')
-  const moves = await State.createGlobalPeersMap("", 'moves')
+  const round        = await State.createGlobalScalarSignal(0, 'round');
+  const noPointsMade = await State.createGlobalPeersMap(0, 'noPointsMade');
+  const scores       = await State.createGlobalPeersMap(0, 'scores')
+  const moves        = await State.createGlobalPeersMap("", 'moves')
 
   const selectRock     = await Patches.outputs.getPulse('selectRock');    selectRock.subscribe(()     => {select("Rock"    )});
   const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
@@ -28,6 +28,7 @@ const Reactive = require('Reactive');
   }
 
   let reset = function(){
+    Diagnostics.log("Reset")
     movesToReceiveBeforeScoring = 0
     scoresToReceiveBeforeAllowingNewRound = 0
     myMove = undefined
@@ -43,11 +44,10 @@ const Reactive = require('Reactive');
   let allOtherMoves = []
 
   let onSomeoneMoved = function(id, event){
-    //Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
 
     if(self.id != id) allOtherMoves.push(event.newValue)
-    else myMove = event.newValue
 
     if(event.newValue != ""){
       movesToReceiveBeforeScoring--
@@ -57,10 +57,17 @@ const Reactive = require('Reactive');
         Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "'.");
         if(pointsObtained != 0){
           (async function () {
-            (await scores.get(self.id)).increment(pointsObtained);
+            let myScore = (await scores.get(self.id))
+            let myNewScore = (myScore.pinLastValue() + pointsObtained)
+            myScore.increment(pointsObtained);
+            Patches.inputs.setString('score', myNewScore.toString());
           })();
         }
-        else noPointsMade.set(noPointsMade.pinLastValue() + 1)
+        else {
+          (async function () {
+            (await noPointsMade.get(self.id)).increment(1);
+          })();
+        }
       }
       else {
         Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
@@ -68,16 +75,9 @@ const Reactive = require('Reactive');
     }
   };
 
-  noPointsMade.monitor().subscribe((event) => {
-    onSomeoneScored("Someone", null)
-  });
-
   let onSomeoneScored = function(id, event){
-    
-    if(event)
-      Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
-    if(id == self.id)
-      Patches.inputs.setString('score', event.newValue.toString());
+    // if(event) Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    // else Diagnostics.log(id + " score hasn't changed.")
 
     scoresToReceiveBeforeAllowingNewRound--
     if(scoresToReceiveBeforeAllowingNewRound <= 0){
@@ -101,12 +101,17 @@ const Reactive = require('Reactive');
       (await scores.get(id)).monitor().subscribe((event) => {
         onSomeoneScored(id,event)
       });
+      (await noPointsMade.get(id)).monitor().subscribe((event) => {
+        onSomeoneScored(id,null)
+      });
     })();
   });
 
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
     let allTheOthersPlayedChicken = true
+
+    // Diagnostics.log("Computing score with my move : " + myMove + " against " + JSON.stringify(allOtherMoves));
 
     for(let i = 0; i < allOtherMoves.length; i++){
       let otherMove = allOtherMoves[i]
@@ -158,7 +163,7 @@ const Reactive = require('Reactive');
 
     (async function () {
       // Get the other call participants
-      const participants = await Participants.getAllOtherParticipants();
+      const participants = await Participants.getOtherParticipantsInSameEffect();
       movesToReceiveBeforeScoring = participants.length + 1
       scoresToReceiveBeforeAllowingNewRound = participants.length + 1
       Diagnostics.log("Round started with " + (participants.length + 1) + " participants.");
@@ -169,21 +174,26 @@ const Reactive = require('Reactive');
       Patches.inputs.setPulse('waitingForResults', Reactive.once());
       Diagnostics.log("10 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
+      myMove = selection
     }, 10000);
   });
 
   // Get the other call participants
-  const participants = await Participants.getAllOtherParticipants();
+  const participants = await Participants.getOtherParticipantsInSameEffect();
   participants.push(self);
 
   for(let key in participants){
     Diagnostics.log("Participant ID : " + participants[key].id);
     (async function () {
-      (await moves.get(participants[key].id)).monitor().subscribe((event) => {
-        onSomeoneMoved(participants[key].id,event)
+      let id = participants[key].id;
+      (await moves.get(id)).monitor().subscribe((event) => {
+        onSomeoneMoved(id,event)
       });
-      (await scores.get(participants[key].id)).monitor().subscribe((event) => {
-        onSomeoneScored(participants[key].id,event)
+      (await scores.get(id)).monitor().subscribe((event) => {
+        onSomeoneScored(id,event)
+      });
+      (await noPointsMade.get(id)).monitor().subscribe((event) => {
+        onSomeoneScored(id,null)
       });
     })();
   }
