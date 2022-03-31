@@ -17,22 +17,15 @@ const Reactive = require('Reactive');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
 
-  const selectRock     = await Patches.outputs.getPulse('selectRock');
-  const selectPaper    = await Patches.outputs.getPulse('selectPaper');
-  const selectScissors = await Patches.outputs.getPulse('selectScissors');
+  const selectRock     = await Patches.outputs.getPulse('selectRock');    selectRock.subscribe(()     => {select("Rock"    )});
+  const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
+  const selectScissors = await Patches.outputs.getPulse('selectScissors');selectScissors.subscribe(() => {select("Scissors")});
 
-  selectRock.subscribe(()     => {selection = "Rock";     Diagnostics.log("Currently selecting " + selection);});
-  selectPaper.subscribe(()    => {selection = "Paper";    Diagnostics.log("Currently selecting " + selection);});
-  selectScissors.subscribe(() => {selection = "Scissors"; Diagnostics.log("Currently selecting " + selection);});
-
-  // let onEachId = async function(funct){
-  //   const participants = await Participants.getAllOtherParticipants();
-  //   participants.push(self);
-
-  //   for(let key in participants){
-  //     funct(participants[key].id)
-  //   }
-  // }
+  function select(selectedValue){
+    selection = selectedValue;
+    //Diagnostics.log("Currently selecting " + selection);
+    Patches.inputs.setString('selection', selection);
+  }
 
   let movesToReceiveBeforeScoring = 0
   let scoresToReceiveBeforeAllowingNewRound = 0
