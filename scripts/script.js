@@ -12,22 +12,27 @@ const Reactive = require('Reactive');
   // Get the current participant, 'self'
   const self = await Participants.self;
 
-  const screenTapPulse = await Patches.outputs.getPulse('screenTapPulse');
-  const startRound     = await Patches.outputs.getPulse('startRound');
-
   const round = await State.createGlobalScalarSignal(0, 'round');
   const noPointsMade = await State.createGlobalScalarSignal(0, 'noPointsMade');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
 
-  let onEachId = async function(funct){
-    const participants = await Participants.getAllOtherParticipants();
-    participants.push(self);
+  const selectRock     = await Patches.outputs.getPulse('selectRock');
+  const selectPaper    = await Patches.outputs.getPulse('selectPaper');
+  const selectScissors = await Patches.outputs.getPulse('selectScissors');
 
-    for(let key in participants){
-      funct(participants[key].id)
-    }
-  }
+  selectRock.subscribe(()     => {selection = "Rock";     Diagnostics.log("Currently selecting " + selection);});
+  selectPaper.subscribe(()    => {selection = "Paper";    Diagnostics.log("Currently selecting " + selection);});
+  selectScissors.subscribe(() => {selection = "Scissors"; Diagnostics.log("Currently selecting " + selection);});
+
+  // let onEachId = async function(funct){
+  //   const participants = await Participants.getAllOtherParticipants();
+  //   participants.push(self);
+
+  //   for(let key in participants){
+  //     funct(participants[key].id)
+  //   }
+  // }
 
   let movesToReceiveBeforeScoring = 0
   let scoresToReceiveBeforeAllowingNewRound = 0
@@ -75,6 +80,7 @@ const Reactive = require('Reactive');
       scoresToReceiveBeforeAllowingNewRound = 0
       Patches.inputs.setPulse('roundFinished', Reactive.once());
       roundIsFinished = true
+      selection = "Chicken"
       Diagnostics.log("New round allowed !")
       moves.set(self.id,"");
     }
@@ -131,16 +137,8 @@ const Reactive = require('Reactive');
 
   let selection = "Chicken"
 
-  screenTapPulse.subscribe(() => {
-    // switch selection
-    if     (selection == "Chicken") selection = "Rock"
-    else if(selection == "Rock")    selection = "Paper"
-    else if(selection == "Paper")   selection = "Cissors"
-    else if(selection == "Cissors") selection = "Chicken"
-    Diagnostics.log("Currently selecting " + selection);
-  });
-
   let roundIsFinished = true
+  const startRound = await Patches.outputs.getPulse('startRound');
   startRound.subscribe(function() {
     if (roundIsFinished) {
       round.set(round.pinLastValue() + 1);
