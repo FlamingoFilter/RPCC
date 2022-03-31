@@ -27,6 +27,15 @@ const Reactive = require('Reactive');
     Patches.inputs.setString('selection', selection);
   }
 
+  let reset = function(){
+    movesToReceiveBeforeScoring = 0
+    scoresToReceiveBeforeAllowingNewRound = 0
+    myMove = undefined
+    allOtherMoves = []
+    select("Chicken")
+    roundIsFinished = true
+  }
+
   let movesToReceiveBeforeScoring = 0
   let scoresToReceiveBeforeAllowingNewRound = 0
 
@@ -45,7 +54,7 @@ const Reactive = require('Reactive');
       if(movesToReceiveBeforeScoring <= 0){
         movesToReceiveBeforeScoring = 0
         let pointsObtained = computeScoreChange(myMove,allOtherMoves)
-        Diagnostics.log("Points obtained : " + pointsObtained);
+        Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "'.");
         if(pointsObtained != 0){
           (async function () {
             (await scores.get(self.id)).increment(pointsObtained);
@@ -72,13 +81,12 @@ const Reactive = require('Reactive');
     if(scoresToReceiveBeforeAllowingNewRound <= 0){
       scoresToReceiveBeforeAllowingNewRound = 0
       Patches.inputs.setPulse('roundFinished', Reactive.once());
-      roundIsFinished = true
-      selection = "Chicken"
-      Diagnostics.log("New round allowed !")
+      // Diagnostics.log("New round allowed !")
       moves.set(self.id,"");
+      reset()
     }
     else {
-      Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + "more scores update before allowing new round...")
+      Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + " more scores update before allowing new round...")
     }
   }
 
@@ -151,14 +159,15 @@ const Reactive = require('Reactive');
       const participants = await Participants.getAllOtherParticipants();
       movesToReceiveBeforeScoring = participants.length + 1
       scoresToReceiveBeforeAllowingNewRound = participants.length + 1
+      Diagnostics.log("Round started with " + (participants.length + 1) + " participants.");
     })();
 
-    // Starts a 3 seconds timer
+    // Starts a 10 seconds timer
     let timer = Time.setTimeout(function() {
       Patches.inputs.setPulse('waitingForResults', Reactive.once());
-      Diagnostics.log("3 seconds passed : You played '" + selection + "'.")
+      Diagnostics.log("10 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
-    }, 3000);
+    }, 10000);
   });
 
   // Get the other call participants
