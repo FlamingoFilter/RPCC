@@ -16,6 +16,7 @@ const Reactive = require('Reactive');
   const noPointsMade = await State.createGlobalPeersMap(0, 'noPointsMade');
   const scores       = await State.createGlobalPeersMap(0, 'scores')
   const moves        = await State.createGlobalPeersMap("", 'moves')
+  const ready        = await State.createGlobalPeersMap(0, 'ready');
 
   const selectRock     = await Patches.outputs.getPulse('selectRock');    selectRock.subscribe(()     => {select("Rock"    )});
   const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
@@ -31,7 +32,7 @@ const Reactive = require('Reactive');
     Diagnostics.log("Reset")
     movesToReceiveBeforeScoring = 0
     scoresToReceiveBeforeAllowingNewRound = 0
-    myMove = undefined
+    myMove = "Chicken"
     allOtherMoves = []
     select("Chicken")
     roundIsFinished = true
@@ -40,7 +41,7 @@ const Reactive = require('Reactive');
   let movesToReceiveBeforeScoring = 0
   let scoresToReceiveBeforeAllowingNewRound = 0
 
-  let myMove
+  let myMove = "Chicken"
   let allOtherMoves = []
 
   let onSomeoneMoved = function(id, event){
@@ -151,11 +152,25 @@ const Reactive = require('Reactive');
     Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
-      // Get the other call participants
-      const participants = await Participants.getOtherParticipantsInSameEffect();
-      movesToReceiveBeforeScoring = participants.length + 1
-      scoresToReceiveBeforeAllowingNewRound = participants.length + 1
-      Diagnostics.log("Round started with " + (participants.length + 1) + " participants.");
+      const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+      let countOfParticipantsReady = 0
+      for(let key in othersParticipants){
+        let id = othersParticipants[key].id
+        Diagnostics.log("Other Participant ID : " + id + " is online.");
+        if((await ready.get(id)).pinLastValue() == 1){
+          countOfParticipantsReady++
+          Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
+        }
+      }
+      if(countOfParticipantsReady == 0) {
+        // TODO : Prevent playing alone ?
+      }
+      else {
+        countOfParticipantsReady++ // Adding ourself
+        movesToReceiveBeforeScoring = countOfParticipantsReady
+        scoresToReceiveBeforeAllowingNewRound = countOfParticipantsReady
+        Diagnostics.log("Round started with " + countOfParticipantsReady + " participants.");
+      }
     })();
 
     // Starts a 10 seconds timer
@@ -188,5 +203,6 @@ const Reactive = require('Reactive');
   }
 
   Patches.inputs.setString('score', "0");
+  (await ready.get(self.id)).increment(1)
   Diagnostics.log("Game loaded !")
 })(); // Enable async/await in JS [part 2]
