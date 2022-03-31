@@ -55,7 +55,7 @@ const Reactive = require('Reactive');
       if(movesToReceiveBeforeScoring <= 0){
         movesToReceiveBeforeScoring = 0
         let pointsObtained = computeScoreChange(myMove,allOtherMoves)
-        Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "'.");
+        Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
         if(pointsObtained != 0){
           (async function () {
             let myScore = (await scores.get(self.id))
@@ -100,8 +100,6 @@ const Reactive = require('Reactive');
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
     let allTheOthersPlayedChicken = true
-
-    // Diagnostics.log("Computing score with my move : " + myMove + " against " + JSON.stringify(allOtherMoves));
 
     for(let i = 0; i < allOtherMoves.length; i++){
       let otherMove = allOtherMoves[i]
