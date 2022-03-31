@@ -15,6 +15,7 @@ const Time = require('Time');
   const startRound     = await Patches.outputs.getPulse('startRound');
 
   const round = await State.createGlobalScalarSignal(0, 'round');
+  const noPointsMade = await State.createGlobalScalarSignal(0, 'noPointsMade');
   const scores = await State.createGlobalPeersMap(0, 'scores')
   const moves = await State.createGlobalPeersMap("", 'moves')
 
@@ -27,48 +28,67 @@ const Time = require('Time');
     }
   }
 
-  let onSomeoneMoved = function(id, event){
-    // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
-    if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
-    
-    let allMovesWereDownloaded = true
-    let allMovesAreEmpty = true
-    let myMove
-    let allOtherMoves = []
+  let movesToReceiveBeforeScoring = 0
+  let scoresToReceiveBeforeAllowingNewRound = 0
 
-    // Check to see if all moves were downloaded
-    onEachId((id) => {
-      (async function () {
-        let move = (await moves.get(id)).pinLastValue()
-        if(self.id != id) allOtherMoves.push(move)
-        else myMove = move
-        if(move == ""){
-          allMovesWereDownloaded = false
-        }
-        else {
-          allMovesAreEmpty = false
-        }
-      })();
-    }).then(() => {
-      // Diagnostics.log(allMovesWereDownloaded ? "All moves downloaded !" : "Not all moves downloaded yet...");
-      if(allMovesWereDownloaded){
+  let myMove
+  let allOtherMoves = []
+
+  let onSomeoneMoved = function(id, event){
+    //Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+    if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
+
+    if(self.id != id) allOtherMoves.push(event.newValue)
+    else myMove = event.newValue
+
+    if(event.newValue != ""){
+      movesToReceiveBeforeScoring--
+      if(movesToReceiveBeforeScoring <= 0){
+        movesToReceiveBeforeScoring = 0
         let pointsObtained = computeScoreChange(myMove,allOtherMoves)
         Diagnostics.log("Points obtained : " + pointsObtained);
-        (async function () {
-          (await scores.get(self.id)).increment(pointsObtained);
-          moves.set(self.id,"");
-        })();
+        if(pointsObtained != 0){
+          (async function () {
+            (await scores.get(self.id)).increment(pointsObtained);
+          })();
+        }
+        else noPointsMade.set(noPointsMade.pinLastValue() + 1)
       }
-      if(allMovesAreEmpty) roundIsFinished = true
-    })
-
+      else {
+        Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
+      }
+    }
   };
+
+  noPointsMade.monitor().subscribe((event) => {
+    onSomeoneScored("Someone", null)
+  });
+
+  let onSomeoneScored = function(id, event){
+    
+    if(event)
+      Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
+
+    scoresToReceiveBeforeAllowingNewRound--
+    if(scoresToReceiveBeforeAllowingNewRound <= 0){
+      scoresToReceiveBeforeAllowingNewRound = 0
+      roundIsFinished = true
+      Diagnostics.log("New round allowed !")
+      moves.set(self.id,"");
+    }
+    else {
+      Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + "more scores update before allowing new round...")
+    }
+  }
 
   moves.setOnNewPeerCallback(function(id){
     (async function () {
       Diagnostics.log("New participant ID : " + id);
       (await moves.get(id)).monitor().subscribe((event) => {
         onSomeoneMoved(id,event)
+      });
+      (await scores.get(id)).monitor().subscribe((event) => {
+        onSomeoneScored(id,event)
       });
     })();
   });
@@ -130,9 +150,17 @@ const Time = require('Time');
 
   round.monitor().subscribe((event) => {
     roundIsFinished = false
-    Diagnostics.log("Starting round " + round.pinLastValue());
+    Diagnostics.log("Starting round " + round.pinLastValue() + ".");
+
+    (async function () {
+      // Get the other call participants
+      const participants = await Participants.getAllOtherParticipants();
+      movesToReceiveBeforeScoring = participants.length + 1
+      scoresToReceiveBeforeAllowingNewRound = participants.length + 1
+    })();
 
     // TODO Add a visual round animation
+
 
     // Starts a 3 seconds timer
     let timer = Time.setTimeout(function() {
@@ -150,6 +178,9 @@ const Time = require('Time');
     (async function () {
       (await moves.get(participants[key].id)).monitor().subscribe((event) => {
         onSomeoneMoved(participants[key].id,event)
+      });
+      (await scores.get(participants[key].id)).monitor().subscribe((event) => {
+        onSomeoneScored(participants[key].id,event)
       });
     })();
   }
