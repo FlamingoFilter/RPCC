@@ -49,6 +49,8 @@ const Materials = require('Materials');
     scoresToReceiveBeforeAllowingNewRound = 0
     myMove = "Chicken"
     allOtherMoves = []
+    myScore = 0
+    allOtherScores = []
     select("Chicken")
     roundIsFinished = true
   }
@@ -58,6 +60,9 @@ const Materials = require('Materials');
 
   let myMove = "Chicken"
   let allOtherMoves = []
+
+  let myScore = 0
+  let allOtherScores = []
 
   let onSomeoneMoved = function(id, event){
     // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
@@ -103,17 +108,40 @@ const Materials = require('Materials');
     // if(event) Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     // else Diagnostics.log(id + " score hasn't changed.")
 
-    scoresToReceiveBeforeAllowingNewRound--
-    if(scoresToReceiveBeforeAllowingNewRound <= 0){
-      scoresToReceiveBeforeAllowingNewRound = 0
-      Patches.inputs.setPulse('roundFinished', Reactive.once());
-      // Diagnostics.log("New round allowed !")
-      moves.set(self.id,"");
-      reset()
-    }
-    else {
-      Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + " more scores update before allowing new round...")
-    }
+    (async function () {
+
+      if(self.id != id) {
+          allOtherScores.push((await scores.get(id)).pinLastValue());
+      }
+      else {
+          myScore = (await scores.get(id)).pinLastValue();
+      }
+
+      scoresToReceiveBeforeAllowingNewRound--
+      if(scoresToReceiveBeforeAllowingNewRound <= 0){
+        scoresToReceiveBeforeAllowingNewRound = 0
+
+        // Winner calculation
+        let win = true
+        for(let key in allOtherScores){
+          let score = allOtherScores[key]
+          if(myScore <= score){
+            win = false;
+            break;
+          }
+        }
+
+        await Patches.inputs.setBoolean('win', win);
+
+        Patches.inputs.setPulse('roundFinished', Reactive.once());
+        // Diagnostics.log("New round allowed !")
+        moves.set(self.id,"");
+        reset()
+      }
+      else {
+        Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + " more scores update before allowing new round...")
+      }
+    })();
   }
 
   moves.setOnNewPeerCallback(       function(id){(async function () {(await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved (id, event)});})();});
