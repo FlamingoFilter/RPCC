@@ -6,6 +6,8 @@ const Participants = require('Participants');
 const State = require('spark-state');
 const Time = require('Time');
 const Reactive = require('Reactive');
+const Scene = require('Scene');
+const Materials = require('Materials');
 
 (async function () { // Enable async/await in JS [part 1]
 
@@ -22,10 +24,22 @@ const Reactive = require('Reactive');
   const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
   const selectScissors = await Patches.outputs.getPulse('selectScissors');selectScissors.subscribe(() => {select("Scissors")});
 
+  const myMoveRect = await Scene.root.findFirst("myMoveRect")
+  const rockMaterial = await Materials.findFirst('rockMaterial')
+  const paperMaterial = await Materials.findFirst('paperMaterial')
+  const scissorsMaterial = await Materials.findFirst('scissorsMaterial')
+  const transparentMaterial = await Materials.findFirst('transparentMaterial')
+
   function select(selectedValue){
     selection = selectedValue;
     //Diagnostics.log("Currently selecting " + selection);
     Patches.inputs.setString('selection', selection);
+    switch(selection){
+      case "Rock"     : myMoveRect.material = rockMaterial;        break;
+      case "Paper"    : myMoveRect.material = paperMaterial;       break;
+      case "Scissors" : myMoveRect.material = scissorsMaterial;    break;
+      default         : myMoveRect.material = transparentMaterial; break;
+    }
   }
 
   let reset = function(){
@@ -54,21 +68,27 @@ const Reactive = require('Reactive');
       movesToReceiveBeforeScoring--
       if(movesToReceiveBeforeScoring <= 0){
         movesToReceiveBeforeScoring = 0
-        let pointsObtained = computeScoreChange(myMove,allOtherMoves)
-        Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
-        if(pointsObtained != 0){
-          (async function () {
-            let myScore = (await scores.get(self.id))
-            let myNewScore = (myScore.pinLastValue() + pointsObtained)
-            myScore.increment(pointsObtained);
-            Patches.inputs.setString('score', myNewScore.toString());
-          })();
-        }
-        else {
-          (async function () {
-            (await noPointsMade.get(self.id)).increment(1);
-          })();
-        }
+
+        Patches.inputs.setPulse('showMove', Reactive.once());
+
+        // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
+        let timer = Time.setTimeout(function() {
+          let pointsObtained = computeScoreChange(myMove,allOtherMoves)
+          Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
+          if(pointsObtained != 0){
+            (async function () {
+              let myScore = (await scores.get(self.id))
+              let myNewScore = (myScore.pinLastValue() + pointsObtained)
+              myScore.increment(pointsObtained);
+              Patches.inputs.setString('score', myNewScore.toString());
+            })();
+          }
+          else {
+            (async function () {
+              (await noPointsMade.get(self.id)).increment(1);
+            })();
+          }
+        }, 3000);
       }
       else {
         Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
