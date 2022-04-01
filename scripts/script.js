@@ -25,9 +25,10 @@ const Materials = require('Materials');
   const selectScissors = await Patches.outputs.getPulse('selectScissors');selectScissors.subscribe(() => {select("Scissors")});
 
   const myMoveRect = await Scene.root.findFirst("myMoveRect")
-  const rockMaterial = await Materials.findFirst('rockMaterial')
-  const paperMaterial = await Materials.findFirst('paperMaterial')
-  const scissorsMaterial = await Materials.findFirst('scissorsMaterial')
+
+  const rockMaterial        = await Materials.findFirst('rockMaterial')
+  const paperMaterial       = await Materials.findFirst('paperMaterial')
+  const scissorsMaterial    = await Materials.findFirst('scissorsMaterial')
   const transparentMaterial = await Materials.findFirst('transparentMaterial')
 
   function select(selectedValue){
@@ -80,7 +81,9 @@ const Materials = require('Materials');
               let myScore = (await scores.get(self.id))
               let myNewScore = (myScore.pinLastValue() + pointsObtained)
               myScore.increment(pointsObtained);
-              Patches.inputs.setString('score', myNewScore.toString());
+              await Patches.inputs.setString('score', myNewScore.toString());
+              await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
+              await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
             })();
           }
           else {
