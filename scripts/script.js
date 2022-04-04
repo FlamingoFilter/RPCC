@@ -43,15 +43,14 @@ const Materials = require('Materials');
     }
   }
 
-  let reset = function(){
-    Diagnostics.log("Reset")
+  let onRoundEnds = function(){
+    Diagnostics.log("onRoundEnds")
     movesToReceiveBeforeScoring = 0
     scoresToReceiveBeforeAllowingNewRound = 0
+    select("Chicken")
     myMove = "Chicken"
     allOtherMoves = []
-    myScore = 0
     allOtherScores = []
-    select("Chicken")
     roundIsFinished = true
   }
 
@@ -59,57 +58,113 @@ const Materials = require('Materials');
   let scoresToReceiveBeforeAllowingNewRound = 0
 
   let myMove = "Chicken"
+  select("Chicken")
   let allOtherMoves = []
 
   let myScore = 0
   let allOtherScores = []
 
+  async function onEveryoneMoved(){
+    Patches.inputs.setPulse('showMove', Reactive.once());
+
+    // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
+    let timer = Time.setTimeout(async function() {
+      let pointsObtained = computeScoreChange(myMove,allOtherMoves)
+      Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
+      scoresToReceiveBeforeAllowingNewRound = await howManyUsersAreReady()
+
+      if(pointsObtained != 0){
+        (async function () {
+          let myCurrentScore = (await scores.get(self.id))
+          let myNewScore = (myCurrentScore.pinLastValue() + pointsObtained)
+          myCurrentScore.increment(pointsObtained);
+          await Patches.inputs.setString('score', myNewScore.toString());
+          await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
+          await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
+        })();
+      }
+      else {
+        (async function () {
+          (await noPointsMade.get(self.id)).increment(1);
+        })();
+      }
+
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      let timer = Time.setTimeout(function() {
+        if(scoresToReceiveBeforeAllowingNewRound > 0){
+          Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
+          scoresToReceiveBeforeAllowingNewRound = 0
+          onEveryoneScored()
+        }
+      }, 6000);
+
+    }, 3000);
+  }
+
   let onSomeoneMoved = function(id, event){
+    // Debug prints
     // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
 
-    if(self.id != id) allOtherMoves.push(event.newValue)
+    (async function () {
+      if(event.newValue != ""){ // Ignore specific values
+        movesToReceiveBeforeScoring--
 
-    if(event.newValue != ""){
-      movesToReceiveBeforeScoring--
-      if(movesToReceiveBeforeScoring <= 0){
-        movesToReceiveBeforeScoring = 0
+        // Discard unwanted datas
+        if(movesToReceiveBeforeScoring < 0){
+          Diagnostics.log("Received a move while not waiting any move (anymore).")
+          movesToReceiveBeforeScoring = 0;
+          return;
+        }
 
-        Patches.inputs.setPulse('showMove', Reactive.once());
+        // Save into local structures
+        if(self.id != id) allOtherMoves.push(event.newValue)
 
-        // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
-        let timer = Time.setTimeout(function() {
-          let pointsObtained = computeScoreChange(myMove,allOtherMoves)
-          Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
-          if(pointsObtained != 0){
-            (async function () {
-              let myScore = (await scores.get(self.id))
-              let myNewScore = (myScore.pinLastValue() + pointsObtained)
-              myScore.increment(pointsObtained);
-              await Patches.inputs.setString('score', myNewScore.toString());
-              await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
-              await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
-            })();
-          }
-          else {
-            (async function () {
-              (await noPointsMade.get(self.id)).increment(1);
-            })();
-          }
-        }, 3000);
+        // React if all data has been received
+        if(movesToReceiveBeforeScoring == 0){
+          onEveryoneMoved()
+        }
+        else {
+          Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
+        }
       }
-      else {
-        Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
+    })();
+  };
+
+  async function onEveryoneScored(){
+    // Winner calculation
+    let win = allOtherScores.length > 0
+    for(let key in allOtherScores){
+      let score = allOtherScores[key]
+      if(myScore <= score){
+        win = false;
+        break;
       }
     }
-  };
+
+    await Patches.inputs.setBoolean('win', win);
+
+    Patches.inputs.setPulse('roundFinished', Reactive.once());
+    // Diagnostics.log("New round allowed !")
+    moves.set(self.id,"");
+    onRoundEnds()
+  }
 
   let onSomeoneScored = function(id, event){
     // if(event) Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
     // else Diagnostics.log(id + " score hasn't changed.")
 
     (async function () {
+      scoresToReceiveBeforeAllowingNewRound--
 
+      // Discard unwanted datas
+      if(scoresToReceiveBeforeAllowingNewRound < 0){
+        Diagnostics.log("Received a score while not waiting any score (anymore).")
+        scoresToReceiveBeforeAllowingNewRound = 0;
+        return;
+      }
+
+      // Save into local structures
       if(self.id != id) {
           allOtherScores.push((await scores.get(id)).pinLastValue());
       }
@@ -117,26 +172,9 @@ const Materials = require('Materials');
           myScore = (await scores.get(id)).pinLastValue();
       }
 
-      scoresToReceiveBeforeAllowingNewRound--
-      if(scoresToReceiveBeforeAllowingNewRound <= 0){
-        scoresToReceiveBeforeAllowingNewRound = 0
-
-        // Winner calculation
-        let win = true
-        for(let key in allOtherScores){
-          let score = allOtherScores[key]
-          if(myScore <= score){
-            win = false;
-            break;
-          }
-        }
-
-        await Patches.inputs.setBoolean('win', win);
-
-        Patches.inputs.setPulse('roundFinished', Reactive.once());
-        // Diagnostics.log("New round allowed !")
-        moves.set(self.id,"");
-        reset()
+      // React if all data has been received
+      if(scoresToReceiveBeforeAllowingNewRound == 0){
+        onEveryoneScored()
       }
       else {
         Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + " more scores update before allowing new round...")
@@ -195,13 +233,8 @@ const Materials = require('Materials');
     }
   });
 
-  round.monitor().subscribe((event) => {
-    roundIsFinished = false
-    Diagnostics.log("Starting round " + round.pinLastValue() + ".");
-    Patches.inputs.setPulse('roundStarted', Reactive.once());
-
-    (async function () {
-      const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+  async function howManyUsersAreReady(){
+    const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
       let countOfParticipantsReady = 0
       for(let key in othersParticipants){
         let id = othersParticipants[key].id
@@ -211,15 +244,18 @@ const Materials = require('Materials');
           Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
         }
       }
-      if(countOfParticipantsReady == 0) {
-        // TODO : Prevent playing alone ?
-      }
-      else {
-        countOfParticipantsReady++ // Adding ourself
-        movesToReceiveBeforeScoring = countOfParticipantsReady
-        scoresToReceiveBeforeAllowingNewRound = countOfParticipantsReady
-        Diagnostics.log("Round started with " + countOfParticipantsReady + " participants.");
-      }
+      return countOfParticipantsReady + 1;// Adding ourself
+  }
+
+  round.monitor().subscribe((event) => {
+    roundIsFinished = false
+    Diagnostics.log("Starting round " + round.pinLastValue() + ".");
+    Patches.inputs.setPulse('roundStarted', Reactive.once());
+
+    (async function () {
+      movesToReceiveBeforeScoring = await howManyUsersAreReady()
+      //scoresToReceiveBeforeAllowingNewRound = movesToReceiveBeforeScoring
+      Diagnostics.log("Round started with " + movesToReceiveBeforeScoring + " participants.");
     })();
 
     // Starts a 10 seconds timer
@@ -228,6 +264,16 @@ const Materials = require('Materials');
       Diagnostics.log("10 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
       myMove = selection
+
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      let timer = Time.setTimeout(function() {
+        if(movesToReceiveBeforeScoring > 0){
+          Diagnostics.log("6 seconds passed after play, some results are still missing.")
+          movesToReceiveBeforeScoring = 0
+          onEveryoneMoved()
+        }
+      }, 6000);
+
     }, 10000);
   });
 
