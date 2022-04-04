@@ -8,6 +8,7 @@ const Time = require('Time');
 const Reactive = require('Reactive');
 const Scene = require('Scene');
 const Materials = require('Materials');
+const Random = require('Random');
 
 (async function () { // Enable async/await in JS [part 1]
 
@@ -19,6 +20,7 @@ const Materials = require('Materials');
   const scores       = await State.createGlobalPeersMap(0, 'scores')
   const moves        = await State.createGlobalPeersMap("", 'moves')
   const ready        = await State.createGlobalPeersMap(0, 'ready');
+  const effects      = await State.createGlobalPeersMap("", 'effects')
 
   const selectRock     = await Patches.outputs.getPulse('selectRock');    selectRock.subscribe(()     => {select("Rock"    )});
   const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
@@ -52,8 +54,6 @@ const Materials = require('Materials');
     allOtherMoves = []
     allOtherScores = []
     roundIsFinished = true
-    onScoreTimeOut = function(){}
-    onMoveTimeOut = function(){}
   }
 
   let movesToReceiveBeforeScoring = 0
@@ -70,6 +70,7 @@ const Materials = require('Materials');
   let onMoveTimeOut = function(){}
 
   async function onEveryoneMoved(){
+    onMoveTimeOut = function(){}
     Patches.inputs.setPulse('showMove', Reactive.once());
 
     // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
@@ -137,7 +138,19 @@ const Materials = require('Materials');
     })();
   };
 
+  let possibleEffects = [
+    {"target" : "others", "name" : "clownNose"}
+   //,{target : "myself", name : "crown"}
+  ]
+
+  let targetFromEffect = {}
+  for(let key in possibleEffects){
+    let effect = possibleEffects[key]
+    targetFromEffect[effect.name] = effect.target
+  }
+
   async function onEveryoneScored(){
+    onScoreTimeOut = function(){}
     // Winner calculation
     let win = allOtherScores.length > 0
     for(let key in allOtherScores){
@@ -145,6 +158,33 @@ const Materials = require('Materials');
       if(myScore <= score){
         win = false;
         break;
+      }
+    }
+
+    let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
+
+    if(win){
+      // Inflicts an effect
+      if(effect.target == "others"){
+        const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+        for(let key in othersParticipants){
+          let id = othersParticipants[key].id
+          Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
+          let previousEffects = (await effects.get(id)).pinLastValue();
+          effects.set(id, previousEffects + effect.name + "|");
+        }
+
+        let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
+        let allMyPreviousEffects = previousEffects.split("|")
+        allMyPreviousEffects.shift() // Remove first
+        effects.set(self.id, allMyPreviousEffects.join("|"));
+      }
+      else if(effect.target == "myself"){
+        Diagnostics.log("Inflicting effect " + effect.name + " on myself.");
+        let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
+        let allMyPreviousEffects = previousEffects.split("|")
+        allMyPreviousEffects.shift() // Remove first
+        effects.set(self.id, allMyPreviousEffects.join("|") + effect.name + "|");
       }
     }
 
@@ -188,9 +228,9 @@ const Materials = require('Materials');
     })();
   }
 
-  moves.setOnNewPeerCallback(       function(id){(async function () {(await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved (id, event)});})();});
-  scores.setOnNewPeerCallback(      function(id){(async function () {(await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(id, event)});})();});
-  noPointsMade.setOnNewPeerCallback(function(id){(async function () {(await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(id, null )});})();});
+  moves.setOnNewPeerCallback(       function(id){(async function () {(await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved (     id, event)});})();});
+  scores.setOnNewPeerCallback(      function(id){(async function () {(await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, event)});})();});
+  noPointsMade.setOnNewPeerCallback(function(id){(async function () {(await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, null )});})();});
 
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
@@ -293,17 +333,16 @@ const Materials = require('Materials');
     Diagnostics.log("Participant ID : " + participants[key].id);
     (async function () {
       let id = participants[key].id;
-      (await moves.get(id)).monitor().subscribe((event) => {
-        onSomeoneMoved(id,event)
-      });
-      (await scores.get(id)).monitor().subscribe((event) => {
-        onSomeoneScored(id,event)
-      });
-      (await noPointsMade.get(id)).monitor().subscribe((event) => {
-        onSomeoneScored(id,null)
-      });
+      (await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved(       id, event)});
+      (await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, event)});
+      (await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, null)});
     })();
   }
+
+  (await effects.get(self.id)).monitor().subscribe((event) => {
+    Diagnostics.log("New effects for me : '" + event.newValue + "'.")
+    Patches.inputs.setString('myEffects', event.newValue)
+  });
 
   Patches.inputs.setString('score', "0");
   (await ready.get(self.id)).increment(1)
