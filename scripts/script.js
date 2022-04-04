@@ -52,6 +52,8 @@ const Materials = require('Materials');
     allOtherMoves = []
     allOtherScores = []
     roundIsFinished = true
+    onScoreTimeOut = function(){}
+    onMoveTimeOut = function(){}
   }
 
   let movesToReceiveBeforeScoring = 0
@@ -63,6 +65,9 @@ const Materials = require('Materials');
 
   let myScore = 0
   let allOtherScores = []
+
+  let onScoreTimeOut = function(){}
+  let onMoveTimeOut = function(){}
 
   async function onEveryoneMoved(){
     Patches.inputs.setPulse('showMove', Reactive.once());
@@ -89,15 +94,16 @@ const Materials = require('Materials');
         })();
       }
 
-      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function() {
+      onScoreTimeOut = function() {
         if(scoresToReceiveBeforeAllowingNewRound > 0){
           Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
           scoresToReceiveBeforeAllowingNewRound = 0
           onEveryoneScored()
         }
-      }, 6000);
+      }
 
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      let timer = Time.setTimeout(function(){onScoreTimeOut()}, 6000);
     }, 3000);
   }
 
@@ -265,14 +271,16 @@ const Materials = require('Materials');
       moves.set(self.id,selection);
       myMove = selection
 
-      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function() {
+      onMoveTimeOut = function() {
         if(movesToReceiveBeforeScoring > 0){
           Diagnostics.log("6 seconds passed after play, some results are still missing.")
           movesToReceiveBeforeScoring = 0
           onEveryoneMoved()
         }
-      }, 6000);
+      }
+
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      let timer = Time.setTimeout(function(){onMoveTimeOut()}, 6000);
 
     }, 10000);
   });
