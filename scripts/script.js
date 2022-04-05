@@ -184,8 +184,8 @@ const Random = require('Random');
         let playerScore = (await scores.get(self.id))
         playerScore.decrement(playerScore.pinLastValue());
       }
-      didIStartThisGame = false
-      Patches.inputs.setBoolean('canStart', true)
+      didIStartThisGame = false;
+      (await ready.get(self.id)).increment(1)
     }
   }
 
@@ -305,7 +305,11 @@ const Random = require('Random');
 
   ready.setOnNewPeerCallback(function(id){ // When a new player joins
     (async function () {
-      (await       ready.get(self.id)).increment(1); // We say again to everyone that we are ready
+      if(gameIsFinished){
+        Diagnostics.log(id + " joined while " + self.id + " is not playing yet.");
+        (await       ready.get(self.id)).increment(1); // We say again to everyone that we are ready if we re not playing now
+      }
+      (await ready.get(id)).monitor().subscribe((event) => {onSomeoneReady(     id, event)});
     })();
   });
 
@@ -346,29 +350,49 @@ const Random = require('Random');
   let selection = "Chicken"
 
   let gameIsFinished = true
-  const startRound = await Patches.outputs.getPulse('startRound');
-  startRound.subscribe(function() {
-    if (gameIsFinished) {
-      didIStartThisGame = true
-      round.set(round.pinLastValue() + 1);
-    }
-    else {
-      Diagnostics.log("Cannot start a new round because a round has started and all moves are not empty again.");
-    }
+  const startGame = await Patches.outputs.getPulse('startGame');
+  startGame.subscribe(function() {
+    (async function () {
+      // Everyone needs to be ready to start a game
+      const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+      for(let key in othersParticipants){
+        let id = othersParticipants[key].id
+        if((await ready.get(id)).pinLastValue() >= 1){
+          continue
+        }
+        else{
+          // Reject the start request
+          return;
+        }
+      }
+
+      if(othersParticipants.length == 0){
+        // Reject the start request
+        return;
+      }
+
+      if (gameIsFinished) {
+        didIStartThisGame = true
+        round.set(round.pinLastValue() + 1);
+      }
+      else {
+        Diagnostics.log("Cannot start a new round because a round has started and all moves are not empty again.");
+      }
+    })();
   });
 
   async function howManyUsersAreReady(){
     const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-      let countOfParticipantsReady = 0
-      for(let key in othersParticipants){
-        let id = othersParticipants[key].id
-        Diagnostics.log("Other Participant ID : " + id + " is online.");
-        if((await ready.get(id)).pinLastValue() >= 1){
-          countOfParticipantsReady++
-          Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
-        }
+    let countOfParticipantsReady = 0
+    for(let key in othersParticipants){
+      let id = othersParticipants[key].id
+      Diagnostics.log("Other Participant ID : " + id + " is online.");
+      if((await ready.get(id)).pinLastValue() >= 1){
+        countOfParticipantsReady++
+        Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
       }
-      return countOfParticipantsReady + 1;// Adding ourself
+    }
+    return countOfParticipantsReady + 1;// Adding ourself
   }
 
   round.monitor().subscribe((event) => {
@@ -416,6 +440,28 @@ const Random = require('Random');
     }, 10000);
   });
 
+  let onSomeoneReady = async function(id, event){
+    let everyoneIsReady = true
+    Diagnostics.log(id + " is now ready.")
+
+    const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+    for(let key in othersParticipants){
+      let id = othersParticipants[key].id
+      if((await ready.get(id)).pinLastValue() >= 1){
+        continue
+      }
+      else {
+        Diagnostics.log(id + " is not ready.")
+        everyoneIsReady = false;
+        break;
+      }
+    }
+
+    if(everyoneIsReady && othersParticipants.length > 0){
+      Patches.inputs.setBoolean('canStart', true)
+    }
+  }
+
   // Get the other call participants
   const participants = await Participants.getOtherParticipantsInSameEffect();
   participants.push(self);
@@ -427,18 +473,19 @@ const Random = require('Random');
       (await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved(       id, event)});
       (await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, event)});
       (await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, null)});
+      (await        ready.get(id)).monitor().subscribe((event) => {onSomeoneReady(       id, event)});
     })();
   }
 
   (await effects.get(self.id)).monitor().subscribe((event) => {
-    Diagnostics.log("New effects for me : '" + event.newValue + "'.")
+    // Diagnostics.log("New effects for me : '" + event.newValue + "'.")
     Patches.inputs.setString('myEffects', event.newValue)
   });
 
   Patches.inputs.setString('score', "0");
-  (await ready.get(self.id)).increment(1)
 
-  Patches.inputs.setBoolean('canStart', true)
+  (await ready.get(self.id)).increment(1);
+  (await onSomeoneReady(self.id, null));
 
-  Diagnostics.log("Game loaded !")
+  Diagnostics.log("Game loaded for " + self.id + " !")
 })(); // Enable async/await in JS [part 2]
