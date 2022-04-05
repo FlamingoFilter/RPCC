@@ -45,19 +45,11 @@ const Random = require('Random');
     }
   }
 
-  let onRoundEnds = function(){
-    Diagnostics.log("onRoundEnds")
-    movesToReceiveBeforeScoring = 0
-    scoresToReceiveBeforeAllowingNewRound = 0
-    select("Chicken")
-    myMove = "Chicken"
-    allOtherMoves = []
-    allOtherScores = []
-    roundIsFinished = true
-  }
+  let didIStartThisGame = false
 
   let movesToReceiveBeforeScoring = 0
   let scoresToReceiveBeforeAllowingNewRound = 0
+  let movesToResetBeforeContinuing = 0
 
   let myMove = "Chicken"
   select("Chicken")
@@ -68,6 +60,7 @@ const Random = require('Random');
 
   let onScoreTimeOut = function(){}
   let onMoveTimeOut = function(){}
+  let onMoveResetTimeOut = function(){}
 
   async function onEveryoneMoved(){
     onMoveTimeOut = function(){}
@@ -77,14 +70,12 @@ const Random = require('Random');
     let timer = Time.setTimeout(async function() {
       let pointsObtained = computeScoreChange(myMove,allOtherMoves)
       Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
-      scoresToReceiveBeforeAllowingNewRound = await howManyUsersAreReady()
 
       if(pointsObtained != 0){
         (async function () {
           let myCurrentScore = (await scores.get(self.id))
           let myNewScore = (myCurrentScore.pinLastValue() + pointsObtained)
           myCurrentScore.increment(pointsObtained);
-          await Patches.inputs.setString('score', myNewScore.toString());
           await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
           await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
         })();
@@ -135,8 +126,67 @@ const Random = require('Random');
           Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
         }
       }
+      else {
+        // Check if everyone has well reset it's move
+        movesToResetBeforeContinuing--
+
+        // Discard unwanted datas
+        if(movesToResetBeforeContinuing < 0){
+          Diagnostics.log("Received a move reset while not waiting any move reset (anymore).")
+          movesToResetBeforeContinuing = 0;
+          return;
+        }
+
+        // React if all data has been received
+        if(movesToResetBeforeContinuing == 0){
+          onEveryoneResettedItsMove()
+        }
+        else {
+          Diagnostics.log("Expecting " + movesToResetBeforeContinuing + " more move reset before continuing...")
+        }
+      }
     })();
   };
+
+  async function onEveryoneResettedItsMove(){
+    onMoveResetTimeOut = function(){}
+
+    let highestScore = myScore
+    let highestScoreCount = 1
+    for(let i = 0; i < allOtherScores.length; i++){
+      let score = allOtherScores[i]
+      if(highestScore < score){
+        highestScore = score;
+        highestScoreCount = 1;
+      }
+      else if(highestScore == score){
+        highestScoreCount++;
+      }
+    }
+    // Diagnostics.log("The highest score is actually " + highestScore + " and " + highestScoreCount + " player haves it.")
+    if(highestScoreCount > 1){ // If there is no winner yet
+      if(didIStartThisGame){ // If we are the player that started this game
+        // Diagnostics.log("Auto start of the next round.")
+        round.set(round.pinLastValue() + 1); // We launch the next round automatically
+      }
+    }
+    else {
+      // Someone won.
+      gameIsFinished = true
+      if(didIStartThisGame){ // The starter player flushes everyones current score
+        const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+        for(let key in othersParticipants){
+            let id = othersParticipants[key].id
+            let playerScore = (await scores.get(id))
+            playerScore.decrement(playerScore.pinLastValue());
+        }
+        // And his own score ofc
+        let playerScore = (await scores.get(self.id))
+        playerScore.decrement(playerScore.pinLastValue());
+      }
+      didIStartThisGame = false
+    }
+  }
 
   let possibleEffects = [
     {"target" : "others", "name" : "clownNose"}
@@ -171,7 +221,8 @@ const Random = require('Random');
           let id = othersParticipants[key].id
           Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
           let previousEffects = (await effects.get(id)).pinLastValue();
-          effects.set(id, previousEffects + effect.name + "|");
+          if(!previousEffects.includes(effect.name)) // Prevent stacking the same effect multiple times
+            effects.set(id, previousEffects + effect.name + "|");
         }
 
         let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
@@ -190,10 +241,23 @@ const Random = require('Random');
 
     await Patches.inputs.setBoolean('win', win);
 
-    Patches.inputs.setPulse('roundFinished', Reactive.once());
-    // Diagnostics.log("New round allowed !")
+    (async function () {
+      
+      onMoveResetTimeOut = function() {
+        if(movesToResetBeforeContinuing > 0){
+          Diagnostics.log("6 seconds passed after scoring, some resets are still missing.")
+          movesToResetBeforeContinuing = 0
+          onEveryoneResettedItsMove()
+        }
+      }
+
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its move reset after a few seconds
+      let timer = Time.setTimeout(function(){onMoveResetTimeOut()}, 6000);
+    })();
+
     moves.set(self.id,"");
-    onRoundEnds()
+
+    Patches.inputs.setPulse('roundFinished', Reactive.once());
   }
 
   let onSomeoneScored = function(id, event){
@@ -201,11 +265,17 @@ const Random = require('Random');
     // else Diagnostics.log(id + " score hasn't changed.")
 
     (async function () {
+      if(id == self.id){
+        Patches.inputs.setString('score', ((await scores.get(self.id)).pinLastValue()).toString());
+      }
+    })();
+
+    (async function () {
       scoresToReceiveBeforeAllowingNewRound--
 
       // Discard unwanted datas
       if(scoresToReceiveBeforeAllowingNewRound < 0){
-        Diagnostics.log("Received a score while not waiting any score (anymore).")
+        if(!gameIsFinished) Diagnostics.log("Received a score while not waiting any score (anymore).")
         scoresToReceiveBeforeAllowingNewRound = 0;
         return;
       }
@@ -268,10 +338,11 @@ const Random = require('Random');
 
   let selection = "Chicken"
 
-  let roundIsFinished = true
+  let gameIsFinished = true
   const startRound = await Patches.outputs.getPulse('startRound');
   startRound.subscribe(function() {
-    if (roundIsFinished) {
+    if (gameIsFinished) {
+      didIStartThisGame = true
       round.set(round.pinLastValue() + 1);
     }
     else {
@@ -294,14 +365,26 @@ const Random = require('Random');
   }
 
   round.monitor().subscribe((event) => {
-    roundIsFinished = false
     Diagnostics.log("Starting round " + round.pinLastValue() + ".");
+
+    movesToReceiveBeforeScoring = 0
+    scoresToReceiveBeforeAllowingNewRound = 0
+    movesToResetBeforeContinuing = 0
+    select("Chicken")
+    myMove = "Chicken"
+    allOtherMoves = []
+    allOtherScores = []
+    gameIsFinished = false;
+
+    Patches.inputs.setBoolean('win', false);
     Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
-      movesToReceiveBeforeScoring = await howManyUsersAreReady()
-      //scoresToReceiveBeforeAllowingNewRound = movesToReceiveBeforeScoring
-      Diagnostics.log("Round started with " + movesToReceiveBeforeScoring + " participants.");
+      let howManyUsersArePlaying      = await howManyUsersAreReady()
+      movesToReceiveBeforeScoring           = howManyUsersArePlaying
+      scoresToReceiveBeforeAllowingNewRound = howManyUsersArePlaying
+      movesToResetBeforeContinuing          = howManyUsersArePlaying
+      Diagnostics.log("Round started with " + howManyUsersArePlaying + " participants.");
     })();
 
     // Starts a 10 seconds timer
