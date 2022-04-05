@@ -457,7 +457,7 @@ const Random = require('Random');
       }
     }
 
-    if(everyoneIsReady && othersParticipants.length > 0){
+    if(everyoneIsReady && othersParticipants.length > 0 && gameIsFinished){
       Patches.inputs.setBoolean('canStart', true)
     }
   }
