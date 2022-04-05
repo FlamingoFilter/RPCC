@@ -185,6 +185,7 @@ const Random = require('Random');
         playerScore.decrement(playerScore.pinLastValue());
       }
       didIStartThisGame = false
+      Patches.inputs.setBoolean('canStart', true)
     }
   }
 
@@ -302,6 +303,12 @@ const Random = require('Random');
   scores.setOnNewPeerCallback(      function(id){(async function () {(await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, event)});})();});
   noPointsMade.setOnNewPeerCallback(function(id){(async function () {(await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, null )});})();});
 
+  ready.setOnNewPeerCallback(function(id){ // When a new player joins
+    (async function () {
+      (await       ready.get(self.id)).increment(1); // We say again to everyone that we are ready
+    })();
+  });
+
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
     let allTheOthersPlayedChicken = true
@@ -356,7 +363,7 @@ const Random = require('Random');
       for(let key in othersParticipants){
         let id = othersParticipants[key].id
         Diagnostics.log("Other Participant ID : " + id + " is online.");
-        if((await ready.get(id)).pinLastValue() == 1){
+        if((await ready.get(id)).pinLastValue() >= 1){
           countOfParticipantsReady++
           Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
         }
@@ -377,6 +384,7 @@ const Random = require('Random');
     gameIsFinished = false;
 
     Patches.inputs.setBoolean('win', false);
+    Patches.inputs.setBoolean('canStart', false)
     Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
@@ -429,5 +437,8 @@ const Random = require('Random');
 
   Patches.inputs.setString('score', "0");
   (await ready.get(self.id)).increment(1)
+
+  Patches.inputs.setBoolean('canStart', true)
+
   Diagnostics.log("Game loaded !")
 })(); // Enable async/await in JS [part 2]
