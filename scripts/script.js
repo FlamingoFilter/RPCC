@@ -190,7 +190,7 @@ const Random = require('Random');
 
   let possibleEffects = [
     {"target" : "others", "name" : "clownNose"}
-   //,{target : "myself", name : "crown"}
+   ,{"target" : "others", "name" : "drunkMarker"}
   ]
 
   let targetFromEffect = {}
