@@ -12,8 +12,11 @@ const Random = require('Random');
 
 (async function () { // Enable async/await in JS [part 1]
 
+  let debug = true
+
   // Get the current participant, 'self'
   const self = await Participants.self;
+  Patches.inputs.setString("playerID", self.id.split("_")[2]);
 
   const round        = await State.createGlobalScalarSignal(0, 'round');
   const noPointsMade = await State.createGlobalPeersMap(0, 'noPointsMade');
@@ -22,8 +25,8 @@ const Random = require('Random');
   const ready        = await State.createGlobalPeersMap(0, 'ready');
   const effects      = await State.createGlobalPeersMap("", 'effects')
 
-  const selectRock     = await Patches.outputs.getPulse('selectRock');    selectRock.subscribe(()     => {select("Rock"    )});
-  const selectPaper    = await Patches.outputs.getPulse('selectPaper');   selectPaper.subscribe(()    => {select("Paper"   )});
+  const selectRock     = await Patches.outputs.getPulse('selectRock');        selectRock.subscribe(() => {select("Rock"    )});
+  const selectPaper    = await Patches.outputs.getPulse('selectPaper');      selectPaper.subscribe(() => {select("Paper"   )});
   const selectScissors = await Patches.outputs.getPulse('selectScissors');selectScissors.subscribe(() => {select("Scissors")});
 
   const myMoveRect = await Scene.root.findFirst("myMoveRect")
@@ -48,7 +51,7 @@ const Random = require('Random');
   let didIStartThisGame = false
 
   let movesToReceiveBeforeScoring = 0
-  let scoresToReceiveBeforeAllowingNewRound = 0
+  let scoresToReceive = 0
   let movesToResetBeforeContinuing = 0
 
   let myMove = "Chicken"
@@ -58,12 +61,22 @@ const Random = require('Random');
   let myScore = 0
   let allOtherScores = []
 
-  let onScoreTimeOut = function(){}
-  let onMoveTimeOut = function(){}
-  let onMoveResetTimeOut = function(){}
+  if (debug) Patches.inputs.setString('setDebugText', "Waiting for\nanother player.")
+
+  // let onScoreTimeOut = function(){}
+  // let onMoveTimeOut = function(){}
+  // let onMoveResetTimeOut = function(){}
+  let onUserLeft = function(id){}
 
   async function onEveryoneMoved(){
-    onMoveTimeOut = function(){}
+    
+    onUserLeft = function(id){
+      movesToResetBeforeContinuing--
+      onSomeoneScored(id, null)
+    };
+
+    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n3 seconds.")
+
     Patches.inputs.setPulse('showMove', Reactive.once());
 
     // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
@@ -71,10 +84,11 @@ const Random = require('Random');
       let pointsObtained = computeScoreChange(myMove,allOtherMoves)
       Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
 
+      if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + scoresToReceive + " scores.")
+
       if(pointsObtained != 0){
         (async function () {
           let myCurrentScore = (await scores.get(self.id))
-          let myNewScore = (myCurrentScore.pinLastValue() + pointsObtained)
           myCurrentScore.increment(pointsObtained);
           await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
           await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
@@ -86,16 +100,16 @@ const Random = require('Random');
         })();
       }
 
-      onScoreTimeOut = function() {
-        if(scoresToReceiveBeforeAllowingNewRound > 0){
-          Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
-          scoresToReceiveBeforeAllowingNewRound = 0
-          onEveryoneScored()
-        }
-      }
+      // onScoreTimeOut = function() {
+      //   if(scoresToReceive > 0){
+      //     Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
+      //     scoresToReceive = 0
+      //     onEveryoneScored()
+      //   }
+      // }
 
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function(){onScoreTimeOut()}, 6000);
+      //let timer = Time.setTimeout(function(){onScoreTimeOut()}, 6000);
     }, 3000);
   }
 
@@ -123,6 +137,7 @@ const Random = require('Random');
           onEveryoneMoved()
         }
         else {
+          if (debug) Patches.inputs.setString('setDebugText', "Waiting for\n" + movesToReceiveBeforeScoring + " moves.")
           Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
         }
       }
@@ -142,6 +157,7 @@ const Random = require('Random');
           onEveryoneResettedItsMove()
         }
         else {
+          if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + movesToResetBeforeContinuing + " moves reset.")
           Diagnostics.log("Expecting " + movesToResetBeforeContinuing + " more move reset before continuing...")
         }
       }
@@ -149,7 +165,10 @@ const Random = require('Random');
   };
 
   async function onEveryoneResettedItsMove(){
-    onMoveResetTimeOut = function(){}
+    
+    onUserLeft = function(id){};
+
+    if (debug) Patches.inputs.setString('setDebugText', "Waiting for\ngame end.")
 
     let highestScore = myScore
     let highestScoreCount = 1
@@ -165,25 +184,29 @@ const Random = require('Random');
     }
     // Diagnostics.log("The highest score is actually " + highestScore + " and " + highestScoreCount + " player haves it.")
     if(highestScoreCount > 1){ // If there is no winner yet
-      if(didIStartThisGame){ // If we are the player that started this game
+      //if(didIStartThisGame){ // If we are the player that started this game
         // Diagnostics.log("Auto start of the next round.")
         round.set(round.pinLastValue() + 1); // We launch the next round automatically
-      }
+      //}
     }
     else {
       // Someone won.
       gameIsFinished = true
-      if(didIStartThisGame){ // The starter player flushes everyones current score
-        const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-        for(let key in othersParticipants){
-            let id = othersParticipants[key].id
-            let playerScore = (await scores.get(id))
-            playerScore.decrement(playerScore.pinLastValue());
-        }
-        // And his own score ofc
-        let playerScore = (await scores.get(self.id))
-        playerScore.decrement(playerScore.pinLastValue());
-      }
+
+      let playerScore = (await scores.get(self.id))
+      playerScore.decrement(playerScore.pinLastValue());
+
+      // if(didIStartThisGame){ // The starter player flushes everyones current score
+      //   const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+      //   for(let key in othersParticipants){
+      //       let id = othersParticipants[key].id
+      //       let playerScore = (await scores.get(id))
+      //       playerScore.decrement(playerScore.pinLastValue());
+      //   }
+      //   // And his own score ofc
+      //   let playerScore = (await scores.get(self.id))
+      //   playerScore.decrement(playerScore.pinLastValue());
+      // }
       didIStartThisGame = false;
       (await ready.get(self.id)).increment(1)
     }
@@ -201,7 +224,13 @@ const Random = require('Random');
   }
 
   async function onEveryoneScored(){
-    onScoreTimeOut = function(){}
+
+    onUserLeft = function(id){
+      onSomeoneMoved(id, {"newValue" : ""})
+    };
+
+    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + movesToResetBeforeContinuing + " moves reset.")
+
     // Winner calculation
     let win = allOtherScores.length > 0
     for(let key in allOtherScores){
@@ -244,16 +273,16 @@ const Random = require('Random');
 
     (async function () {
       
-      onMoveResetTimeOut = function() {
-        if(movesToResetBeforeContinuing > 0){
-          Diagnostics.log("6 seconds passed after scoring, some resets are still missing.")
-          movesToResetBeforeContinuing = 0
-          onEveryoneResettedItsMove()
-        }
-      }
+      // onMoveResetTimeOut = function() {
+      //   if(movesToResetBeforeContinuing > 0){
+      //     Diagnostics.log("6 seconds passed after scoring, some resets are still missing.")
+      //     movesToResetBeforeContinuing = 0
+      //     onEveryoneResettedItsMove()
+      //   }
+      // }
 
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its move reset after a few seconds
-      let timer = Time.setTimeout(function(){onMoveResetTimeOut()}, 6000);
+      // let timer = Time.setTimeout(function(){onMoveResetTimeOut()}, 6000);
     })();
 
     moves.set(self.id,"");
@@ -272,12 +301,12 @@ const Random = require('Random');
     })();
 
     (async function () {
-      scoresToReceiveBeforeAllowingNewRound--
+      scoresToReceive--
 
       // Discard unwanted datas
-      if(scoresToReceiveBeforeAllowingNewRound < 0){
+      if(scoresToReceive < 0){
         if(!gameIsFinished) Diagnostics.log("Received a score while not waiting any score (anymore).")
-        scoresToReceiveBeforeAllowingNewRound = 0;
+        scoresToReceive = 0;
         return;
       }
 
@@ -290,11 +319,12 @@ const Random = require('Random');
       }
 
       // React if all data has been received
-      if(scoresToReceiveBeforeAllowingNewRound == 0){
+      if(scoresToReceive == 0){
         onEveryoneScored()
       }
       else {
-        Diagnostics.log("Expecting " + scoresToReceiveBeforeAllowingNewRound + " more scores update before allowing new round...")
+        if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + scoresToReceive + " scores.")
+        Diagnostics.log("Expecting " + scoresToReceive + " more scores update before allowing new round...")
       }
     })();
   }
@@ -386,10 +416,10 @@ const Random = require('Random');
     let countOfParticipantsReady = 0
     for(let key in othersParticipants){
       let id = othersParticipants[key].id
-      Diagnostics.log("Other Participant ID : " + id + " is online.");
+      // Diagnostics.log("Other Participant ID : " + id + " is online.");
       if((await ready.get(id)).pinLastValue() >= 1){
         countOfParticipantsReady++
-        Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
+        // Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
       }
     }
     return countOfParticipantsReady + 1;// Adding ourself
@@ -399,7 +429,7 @@ const Random = require('Random');
     Diagnostics.log("Starting round " + round.pinLastValue() + ".");
 
     movesToReceiveBeforeScoring = 0
-    scoresToReceiveBeforeAllowingNewRound = 0
+    scoresToReceive = 0
     movesToResetBeforeContinuing = 0
     select("Chicken")
     myMove = "Chicken"
@@ -414,28 +444,37 @@ const Random = require('Random');
     (async function () {
       let howManyUsersArePlaying      = await howManyUsersAreReady()
       movesToReceiveBeforeScoring           = howManyUsersArePlaying
-      scoresToReceiveBeforeAllowingNewRound = howManyUsersArePlaying
+      scoresToReceive = howManyUsersArePlaying
       movesToResetBeforeContinuing          = howManyUsersArePlaying
       Diagnostics.log("Round started with " + howManyUsersArePlaying + " participants.");
     })();
 
+    onUserLeft = function(id){
+      scoresToReceive--
+      movesToResetBeforeContinuing--
+      onSomeoneMoved(id, {"newValue" : "Chicken"})
+    };
+
+    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n10 seconds.")
+
     // Starts a 10 seconds timer
     let timer = Time.setTimeout(function() {
+      if (debug) Patches.inputs.setString('setDebugText', "Waiting for\n" + movesToReceiveBeforeScoring + " moves.")
       Patches.inputs.setPulse('waitingForResults', Reactive.once());
       Diagnostics.log("10 seconds passed : You played '" + selection + "'.")
       moves.set(self.id,selection);
       myMove = selection
 
-      onMoveTimeOut = function() {
-        if(movesToReceiveBeforeScoring > 0){
-          Diagnostics.log("6 seconds passed after play, some results are still missing.")
-          movesToReceiveBeforeScoring = 0
-          onEveryoneMoved()
-        }
-      }
+      // onMoveTimeOut = function() {
+      //   if(movesToReceiveBeforeScoring > 0){
+      //     Diagnostics.log("6 seconds passed after play, some results are still missing.")
+      //     movesToReceiveBeforeScoring = 0
+      //     onEveryoneMoved()
+      //   }
+      // }
 
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function(){onMoveTimeOut()}, 6000);
+      // let timer = Time.setTimeout(function(){onMoveTimeOut()}, 6000);
 
     }, 10000);
   });
@@ -451,6 +490,7 @@ const Random = require('Random');
         continue
       }
       else {
+        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + id.split("_")[2] + "!")
         Diagnostics.log(id + " is not ready.")
         everyoneIsReady = false;
         break;
@@ -458,18 +498,19 @@ const Random = require('Random');
     }
 
     if(everyoneIsReady && othersParticipants.length > 0 && gameIsFinished){
+      if (debug) Patches.inputs.setString('setDebugText', "")
       Patches.inputs.setBoolean('canStart', true)
     }
   }
 
   // Get the other call participants
-  const participants = await Participants.getOtherParticipantsInSameEffect();
-  participants.push(self);
+  const activeParticipants = await Participants.getOtherParticipantsInSameEffect();
+  activeParticipants.push(self);
 
-  for(let key in participants){
-    Diagnostics.log("Participant ID : " + participants[key].id);
+  for(let key in activeParticipants){
+    Diagnostics.log("Participant ID : " + activeParticipants[key].id);
     (async function () {
-      let id = participants[key].id;
+      let id = activeParticipants[key].id;
       (await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved(       id, event)});
       (await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, event)});
       (await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, null)});
@@ -486,6 +527,81 @@ const Random = require('Random');
 
   (await ready.get(self.id)).increment(1);
   (await onSomeoneReady(self.id, null));
+
+
+  // --------------------------------------------------------------------------------------------
+  // Get the other call participants
+  const participants = await Participants.getAllOtherParticipants();
+
+  // Get each participant in the participant list
+  participants.forEach(function(participant) {
+
+    // Monitor each participant's isActiveInSameEffect status
+    // The use of subscribeWithSnapshot here allows us to capture the participant who
+    // triggered the event (ie enters or leaves the call) inside of the callback
+    participant.isActiveInSameEffect.monitor().subscribeWithSnapshot({
+      userIndex: participants.indexOf(participant),
+    }, function(event, snapshot) {
+
+      // Pass the participant and their active status to the custom function
+      onUserEnterOrLeave(snapshot.userIndex, event.newValue);
+    });
+  });
+
+  // Monitor when a new participant joins
+  Participants.onOtherParticipantAdded().subscribe(function(participant) {
+
+    // Add them to the main participant list
+    participants.push(participant);
+
+    // Monitor their isActiveInSameEffect status
+    participant.isActiveInSameEffect.monitor({fireOnInitialValue: true}).subscribeWithSnapshot({
+      userIndex: participants.indexOf(participant),
+    }, function(event, snapshot) {
+
+      // Pass the participant and their isActiveInSameEffect status to the custom function
+      onUserEnterOrLeave(snapshot.userIndex, event.newValue);
+    });
+  });
+
+  // If a user joined, isActive will be true. Otherwise it will be false
+  function onUserEnterOrLeave(userIndex, isActive) {
+
+    // Get the participant that triggered the change in the participant list
+    let participant = participants[userIndex];
+
+    // Check if the participant exists in the activeParticipants list
+    let activeParticipantCheck = activeParticipants.find(activeParticipant => {
+      return activeParticipant.id === participant.id
+    });
+
+    if (isActive) {
+
+      // If the participant is found in the active participants list
+      if (activeParticipantCheck === undefined) {
+
+        // Add the participant to the active participants list
+        activeParticipants.push(participant);
+
+        Diagnostics.log("User " + participant.id + " joined the effect");
+        Patches.inputs.setBoolean('canStart', false)
+        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + participant.id.split("_")[2] + "!")
+      }
+    } else {
+
+      // If the participant is not found in the active participants list
+      if (activeParticipantCheck !== undefined) {
+
+        // Update the active participants list with the new participant
+        let activeIndex = activeParticipants.indexOf(activeParticipantCheck);
+
+        activeParticipants.splice(activeIndex, 1);
+
+        Diagnostics.log("User " + participant.id + " left the effect");
+        onUserLeft(participant.id)
+      }
+    }
+  }
 
   Diagnostics.log("Game loaded for " + self.id + " !")
 })(); // Enable async/await in JS [part 2]
