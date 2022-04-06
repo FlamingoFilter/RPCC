@@ -16,14 +16,43 @@ const Random = require('Random');
 
   // Get the current participant, 'self'
   const self = await Participants.self;
-  Patches.inputs.setString("playerID", self.id.split("_")[2]);
+  Patches.inputs.setString("playerID", self.id.substring(self.id.length-4,self.id.length));
 
-  const round        = await State.createGlobalScalarSignal(0, 'round');
-  const noPointsMade = await State.createGlobalPeersMap(0, 'noPointsMade');
-  const scores       = await State.createGlobalPeersMap(0, 'scores')
-  const moves        = await State.createGlobalPeersMap("", 'moves')
-  const ready        = await State.createGlobalPeersMap(0, 'ready');
   const effects      = await State.createGlobalPeersMap("", 'effects')
+
+  var playersReady = {}
+
+  const scriptLoadedChannel = Multipeer.getMessageChannel("ScriptLoaded");
+  scriptLoadedChannel.onMessage.subscribe((msg) => {
+    // Diagnostics.log("Received message " + JSON.stringify(msg));
+    if(msg.destination && msg.destination != self.id){
+      return;
+    }
+    playersReady[msg.source] = true
+    onSomeoneReady(msg.source)
+
+    if(!msg.destination && gameIsFinished){
+      scriptLoadedChannel.sendMessage({ // Reply only to the source that we also are ready
+        "source": self.id,
+        "destination" : msg.source
+      });
+    }
+  });
+
+  const moveChannel = Multipeer.getMessageChannel("move");
+  moveChannel.onMessage.subscribe((msg) => {
+    onSomeoneMoved(msg.id, msg.move)
+  });
+
+  const scoreChannel = Multipeer.getMessageChannel("score");
+  scoreChannel.onMessage.subscribe((msg) => {
+    onSomeoneScored(msg.id, msg.score)
+  });
+
+  const roundChannel = Multipeer.getMessageChannel("round");
+  roundChannel.onMessage.subscribe((msg) => {
+    if(gameIsFinished) startRound()
+  });
 
   const selectRock     = await Patches.outputs.getPulse('selectRock');        selectRock.subscribe(() => {select("Rock"    )});
   const selectPaper    = await Patches.outputs.getPulse('selectPaper');      selectPaper.subscribe(() => {select("Paper"   )});
@@ -48,11 +77,10 @@ const Random = require('Random');
     }
   }
 
-  let didIStartThisGame = false
+  // let didIStartThisGame = false
 
   let movesToReceiveBeforeScoring = 0
   let scoresToReceive = 0
-  let movesToResetBeforeContinuing = 0
 
   let myMove = "Chicken"
   select("Chicken")
@@ -63,112 +91,131 @@ const Random = require('Random');
 
   if (debug) Patches.inputs.setString('setDebugText', "Waiting for\nanother player.")
 
-  // let onScoreTimeOut = function(){}
-  // let onMoveTimeOut = function(){}
-  // let onMoveResetTimeOut = function(){}
+  let onScoreTimeOut = function(){}
+  let onMoveTimeOut = function(){}
   let onUserLeft = function(id){}
 
-  async function onEveryoneMoved(){
-    
+  let onEveryoneMoved = function(){
+    onMoveTimeOut = function(){}
     onUserLeft = function(id){
-      movesToResetBeforeContinuing--
       onSomeoneScored(id, null)
     };
 
-    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n3 seconds.")
+    // if (debug) Patches.inputs.setString('setDebugText', "Waiting\n3 seconds.")
 
     Patches.inputs.setPulse('showMove', Reactive.once());
 
     // Starts a 3 seconds timer before counting our score, for seeing moves made by everyone
-    let timer = Time.setTimeout(async function() {
+    let timer = Time.setTimeout(function() {
       let pointsObtained = computeScoreChange(myMove,allOtherMoves)
       Diagnostics.log("Points obtained : " + pointsObtained + " by playing '" + myMove + "' against " + JSON.stringify(allOtherMoves) + ".");
 
-      if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + scoresToReceive + " scores.")
+      myScore += pointsObtained;
+      scoreChannel.sendMessage({
+        id : self.id,
+        score : myScore
+      });
+      onSomeoneScored(self.id, myScore)
 
-      if(pointsObtained != 0){
-        (async function () {
-          let myCurrentScore = (await scores.get(self.id))
-          myCurrentScore.increment(pointsObtained);
-          await Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
-          await Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
-        })();
-      }
-      else {
-        (async function () {
-          (await noPointsMade.get(self.id)).increment(1);
-        })();
-      }
+      Patches.inputs.setString('score', myScore.toString());
+      Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
+      Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
 
-      // onScoreTimeOut = function() {
-      //   if(scoresToReceive > 0){
-      //     Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
-      //     scoresToReceive = 0
-      //     onEveryoneScored()
-      //   }
-      // }
+      onScoreTimeOut = function() {
+        if(scoresToReceive > 0){
+          Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
+          endGame()
+        }
+      }
 
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      //let timer = Time.setTimeout(function(){onScoreTimeOut()}, 6000);
+      let timer = Time.setTimeout(function(){onScoreTimeOut()}, 10000);
     }, 3000);
   }
 
-  let onSomeoneMoved = function(id, event){
+  let onSomeoneMoved = function(id, move){
     // Debug prints
     // Diagnostics.log(id + " move has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
-    if(id != self.id && event.newValue != "") Diagnostics.log(id + " played '" + event.newValue + "'.");
+    if(id != self.id && move != "") Diagnostics.log(id + " played '" + move + "'.");
+
+    movesToReceiveBeforeScoring--
+
+    // Discard unwanted datas
+    if(movesToReceiveBeforeScoring < 0){
+      Diagnostics.log("Received a move while not waiting any move (anymore).")
+      movesToReceiveBeforeScoring = 0;
+      return;
+    }
+
+    // Save into local structures
+    if(self.id != id) allOtherMoves.push(move)
+
+    // React if all data has been received
+    if(movesToReceiveBeforeScoring == 0){
+      onEveryoneMoved()
+    }
+    else {
+      // if (debug) Patches.inputs.setString('setDebugText', "Waiting for\n" + movesToReceiveBeforeScoring + " moves.")
+      Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
+    }
+  };
+
+  let possibleEffects = [
+    {"target" : "others", "name" : "clownNose"}
+   ,{"target" : "others", "name" : "drunkMarker"}
+  ]
+
+  let targetFromEffect = {}
+  for(let key in possibleEffects){
+    let effect = possibleEffects[key]
+    targetFromEffect[effect.name] = effect.target
+  }
+
+  let onEveryoneScored = function(){
+    onScoreTimeOut = function(){};
+    onUserLeft = function(id){};
+
+    // Winner calculation
+    let win = allOtherScores.length > 0
+    for(let key in allOtherScores){
+      let score = allOtherScores[key]
+      if(myScore <= score){
+        win = false;
+        break;
+      }
+    }
 
     (async function () {
-      if(event.newValue != ""){ // Ignore specific values
-        movesToReceiveBeforeScoring--
+      let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
+      if(win){
+        // Inflicts an effect
+        if(effect.target == "others"){
+          const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+          for(let key in othersParticipants){
+            let id = othersParticipants[key].id
+            Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
+            let previousEffects = (await effects.get(id)).pinLastValue();
+            if(!previousEffects.includes(effect.name)) // Prevent stacking the same effect multiple times
+              effects.set(id, previousEffects + effect.name + "|");
+          }
 
-        // Discard unwanted datas
-        if(movesToReceiveBeforeScoring < 0){
-          Diagnostics.log("Received a move while not waiting any move (anymore).")
-          movesToReceiveBeforeScoring = 0;
-          return;
+          let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
+          let allMyPreviousEffects = previousEffects.split("|")
+          allMyPreviousEffects.shift() // Remove first
+          effects.set(self.id, allMyPreviousEffects.join("|"));
         }
-
-        // Save into local structures
-        if(self.id != id) allOtherMoves.push(event.newValue)
-
-        // React if all data has been received
-        if(movesToReceiveBeforeScoring == 0){
-          onEveryoneMoved()
-        }
-        else {
-          if (debug) Patches.inputs.setString('setDebugText', "Waiting for\n" + movesToReceiveBeforeScoring + " moves.")
-          Diagnostics.log("Expecting " + movesToReceiveBeforeScoring + " more moves before counting...")
-        }
-      }
-      else {
-        // Check if everyone has well reset it's move
-        movesToResetBeforeContinuing--
-
-        // Discard unwanted datas
-        if(movesToResetBeforeContinuing < 0){
-          Diagnostics.log("Received a move reset while not waiting any move reset (anymore).")
-          movesToResetBeforeContinuing = 0;
-          return;
-        }
-
-        // React if all data has been received
-        if(movesToResetBeforeContinuing == 0){
-          onEveryoneResettedItsMove()
-        }
-        else {
-          if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + movesToResetBeforeContinuing + " moves reset.")
-          Diagnostics.log("Expecting " + movesToResetBeforeContinuing + " more move reset before continuing...")
+        else if(effect.target == "myself"){
+          Diagnostics.log("Inflicting effect " + effect.name + " on myself.");
+          let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
+          let allMyPreviousEffects = previousEffects.split("|")
+          allMyPreviousEffects.shift() // Remove first
+          effects.set(self.id, allMyPreviousEffects.join("|") + effect.name + "|");
         }
       }
     })();
-  };
 
-  async function onEveryoneResettedItsMove(){
-    
-    onUserLeft = function(id){};
-
-    if (debug) Patches.inputs.setString('setDebugText', "Waiting for\ngame end.")
+    Patches.inputs.setBoolean('win', win);
+    Patches.inputs.setPulse('roundFinished', Reactive.once());
 
     let highestScore = myScore
     let highestScoreCount = 1
@@ -184,164 +231,37 @@ const Random = require('Random');
     }
     // Diagnostics.log("The highest score is actually " + highestScore + " and " + highestScoreCount + " player haves it.")
     if(highestScoreCount > 1){ // If there is no winner yet
-      //if(didIStartThisGame){ // If we are the player that started this game
-        // Diagnostics.log("Auto start of the next round.")
-        round.set(round.pinLastValue() + 1); // We launch the next round automatically
-      //}
+      startRound() // We launch the next round automatically
+    }
+    else { // Someone won.
+      endGame()
+    }
+  }
+
+  let onSomeoneScored = function(id, score){
+    scoresToReceive--
+
+    // Discard unwanted datas
+    if(scoresToReceive < 0){
+      if(!gameIsFinished) Diagnostics.log("Received a score while not waiting any score (anymore).")
+      scoresToReceive = 0;
+      return;
+    }
+
+    // Save into local structures
+    if(self.id != id && score !== null) {
+        allOtherScores.push(score);
+    }
+
+    // React if all data has been received
+    if(scoresToReceive == 0){
+      onEveryoneScored()
     }
     else {
-      // Someone won.
-      gameIsFinished = true
-
-      let playerScore = (await scores.get(self.id))
-      playerScore.decrement(playerScore.pinLastValue());
-
-      // if(didIStartThisGame){ // The starter player flushes everyones current score
-      //   const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-      //   for(let key in othersParticipants){
-      //       let id = othersParticipants[key].id
-      //       let playerScore = (await scores.get(id))
-      //       playerScore.decrement(playerScore.pinLastValue());
-      //   }
-      //   // And his own score ofc
-      //   let playerScore = (await scores.get(self.id))
-      //   playerScore.decrement(playerScore.pinLastValue());
-      // }
-      didIStartThisGame = false;
-      (await ready.get(self.id)).increment(1)
+      // if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + scoresToReceive + " scores.")
+      Diagnostics.log("Expecting " + scoresToReceive + " more scores update before allowing new round...")
     }
   }
-
-  let possibleEffects = [
-    {"target" : "others", "name" : "clownNose"}
-   ,{"target" : "others", "name" : "drunkMarker"}
-  ]
-
-  let targetFromEffect = {}
-  for(let key in possibleEffects){
-    let effect = possibleEffects[key]
-    targetFromEffect[effect.name] = effect.target
-  }
-
-  async function onEveryoneScored(){
-
-    onUserLeft = function(id){
-      onSomeoneMoved(id, {"newValue" : ""})
-    };
-
-    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + movesToResetBeforeContinuing + " moves reset.")
-
-    // Winner calculation
-    let win = allOtherScores.length > 0
-    for(let key in allOtherScores){
-      let score = allOtherScores[key]
-      if(myScore <= score){
-        win = false;
-        break;
-      }
-    }
-
-    let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
-
-    if(win){
-      // Inflicts an effect
-      if(effect.target == "others"){
-        const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-        for(let key in othersParticipants){
-          let id = othersParticipants[key].id
-          Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
-          let previousEffects = (await effects.get(id)).pinLastValue();
-          if(!previousEffects.includes(effect.name)) // Prevent stacking the same effect multiple times
-            effects.set(id, previousEffects + effect.name + "|");
-        }
-
-        let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
-        let allMyPreviousEffects = previousEffects.split("|")
-        allMyPreviousEffects.shift() // Remove first
-        effects.set(self.id, allMyPreviousEffects.join("|"));
-      }
-      else if(effect.target == "myself"){
-        Diagnostics.log("Inflicting effect " + effect.name + " on myself.");
-        let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
-        let allMyPreviousEffects = previousEffects.split("|")
-        allMyPreviousEffects.shift() // Remove first
-        effects.set(self.id, allMyPreviousEffects.join("|") + effect.name + "|");
-      }
-    }
-
-    await Patches.inputs.setBoolean('win', win);
-
-    (async function () {
-      
-      // onMoveResetTimeOut = function() {
-      //   if(movesToResetBeforeContinuing > 0){
-      //     Diagnostics.log("6 seconds passed after scoring, some resets are still missing.")
-      //     movesToResetBeforeContinuing = 0
-      //     onEveryoneResettedItsMove()
-      //   }
-      // }
-
-      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its move reset after a few seconds
-      // let timer = Time.setTimeout(function(){onMoveResetTimeOut()}, 6000);
-    })();
-
-    moves.set(self.id,"");
-
-    Patches.inputs.setPulse('roundFinished', Reactive.once());
-  }
-
-  let onSomeoneScored = function(id, event){
-    // if(event) Diagnostics.log(id + " score has changed from '" + event.oldValue + "' to '" + event.newValue + "'");
-    // else Diagnostics.log(id + " score hasn't changed.")
-
-    (async function () {
-      if(id == self.id){
-        Patches.inputs.setString('score', ((await scores.get(self.id)).pinLastValue()).toString());
-      }
-    })();
-
-    (async function () {
-      scoresToReceive--
-
-      // Discard unwanted datas
-      if(scoresToReceive < 0){
-        if(!gameIsFinished) Diagnostics.log("Received a score while not waiting any score (anymore).")
-        scoresToReceive = 0;
-        return;
-      }
-
-      // Save into local structures
-      if(self.id != id) {
-          allOtherScores.push((await scores.get(id)).pinLastValue());
-      }
-      else {
-          myScore = (await scores.get(id)).pinLastValue();
-      }
-
-      // React if all data has been received
-      if(scoresToReceive == 0){
-        onEveryoneScored()
-      }
-      else {
-        if (debug) Patches.inputs.setString('setDebugText', "Waiting\n" + scoresToReceive + " scores.")
-        Diagnostics.log("Expecting " + scoresToReceive + " more scores update before allowing new round...")
-      }
-    })();
-  }
-
-  moves.setOnNewPeerCallback(       function(id){(async function () {(await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved (     id, event)});})();});
-  scores.setOnNewPeerCallback(      function(id){(async function () {(await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, event)});})();});
-  noPointsMade.setOnNewPeerCallback(function(id){(async function () {(await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(     id, null )});})();});
-
-  ready.setOnNewPeerCallback(function(id){ // When a new player joins
-    (async function () {
-      if(gameIsFinished){
-        Diagnostics.log(id + " joined while " + self.id + " is not playing yet.");
-        (await       ready.get(self.id)).increment(1); // We say again to everyone that we are ready if we re not playing now
-      }
-      (await ready.get(id)).monitor().subscribe((event) => {onSomeoneReady(     id, event)});
-    })();
-  });
 
   function computeScoreChange(myMove, allOtherMoves){
     let scoreChange = 0
@@ -387,7 +307,7 @@ const Random = require('Random');
       const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
       for(let key in othersParticipants){
         let id = othersParticipants[key].id
-        if((await ready.get(id)).pinLastValue() >= 1){
+        if(playersReady[id]){
           continue
         }
         else{
@@ -402,8 +322,11 @@ const Random = require('Random');
       }
 
       if (gameIsFinished) {
-        didIStartThisGame = true
-        round.set(round.pinLastValue() + 1);
+        // didIStartThisGame = true
+        roundChannel.sendMessage({
+          id : self.id
+        })
+        startRound()
       }
       else {
         Diagnostics.log("Cannot start a new round because a round has started and all moves are not empty again.");
@@ -411,26 +334,17 @@ const Random = require('Random');
     })();
   });
 
-  async function howManyUsersAreReady(){
-    const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-    let countOfParticipantsReady = 0
-    for(let key in othersParticipants){
-      let id = othersParticipants[key].id
-      // Diagnostics.log("Other Participant ID : " + id + " is online.");
-      if((await ready.get(id)).pinLastValue() >= 1){
-        countOfParticipantsReady++
-        // Diagnostics.log("Other Participant ID : " + id + " is ready to play.");
-      }
+  let startRound = function(){
+    if(gameIsFinished){
+      Diagnostics.log("Starting game.");
+      myScore = 0
+      Patches.inputs.setString('score', myScore.toString());
     }
-    return countOfParticipantsReady + 1;// Adding ourself
-  }
 
-  round.monitor().subscribe((event) => {
-    Diagnostics.log("Starting round " + round.pinLastValue() + ".");
+    Diagnostics.log("Starting round.");
 
     movesToReceiveBeforeScoring = 0
     scoresToReceive = 0
-    movesToResetBeforeContinuing = 0
     select("Chicken")
     myMove = "Chicken"
     allOtherMoves = []
@@ -442,55 +356,74 @@ const Random = require('Random');
     Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
-      let howManyUsersArePlaying      = await howManyUsersAreReady()
-      movesToReceiveBeforeScoring           = howManyUsersArePlaying
-      scoresToReceive = howManyUsersArePlaying
-      movesToResetBeforeContinuing          = howManyUsersArePlaying
-      Diagnostics.log("Round started with " + howManyUsersArePlaying + " participants.");
+
+      const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+      let othersId = ""
+      let countOfParticipantsReady = 0
+      for(let key in othersParticipants){
+        let id = othersParticipants[key].id
+        if(playersReady[id]){
+          countOfParticipantsReady++
+          if(othersId == "")      othersId = id.substring(id.length-4,id.length)
+          else othersId = othersId + " & " + id.substring(id.length-4,id.length)
+        }
+      }
+
+      movesToReceiveBeforeScoring           = countOfParticipantsReady + 1
+      scoresToReceive                       = countOfParticipantsReady + 1
+      // if (debug) Patches.inputs.setString('setDebugText', "Playing with\n" + othersId)
+      Diagnostics.log("Round started with " + countOfParticipantsReady + " other participants.");
     })();
 
     onUserLeft = function(id){
       scoresToReceive--
-      movesToResetBeforeContinuing--
-      onSomeoneMoved(id, {"newValue" : "Chicken"})
+      onSomeoneMoved(id, "Chicken")
     };
-
-    if (debug) Patches.inputs.setString('setDebugText', "Waiting\n10 seconds.")
 
     // Starts a 10 seconds timer
     let timer = Time.setTimeout(function() {
-      if (debug) Patches.inputs.setString('setDebugText', "Waiting for\n" + movesToReceiveBeforeScoring + " moves.")
       Patches.inputs.setPulse('waitingForResults', Reactive.once());
       Diagnostics.log("10 seconds passed : You played '" + selection + "'.")
-      moves.set(self.id,selection);
-      myMove = selection
+      moveChannel.sendMessage({
+        id : self.id,
+        move : selection
+      });
+      myMove = selection;
+      onSomeoneMoved(self.id, selection)
 
-      // onMoveTimeOut = function() {
-      //   if(movesToReceiveBeforeScoring > 0){
-      //     Diagnostics.log("6 seconds passed after play, some results are still missing.")
-      //     movesToReceiveBeforeScoring = 0
-      //     onEveryoneMoved()
-      //   }
-      // }
+      onMoveTimeOut = function() {
+        if(movesToReceiveBeforeScoring > 0){
+          Diagnostics.log("6 seconds passed after play, some results are still missing.")
+          endGame()
+        }
+      }
 
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      // let timer = Time.setTimeout(function(){onMoveTimeOut()}, 6000);
+      let timer = Time.setTimeout(function(){onMoveTimeOut()}, 10000);
 
-    }, 10000);
-  });
+    }, 6000);
+  };
 
-  let onSomeoneReady = async function(id, event){
+  let endGame = function(){
+    gameIsFinished = true;
+    scriptLoadedChannel.sendMessage({ // Confirm to everyone that we are again ready to play
+        "source": self.id
+    });
+    onSomeoneReady(self.id)
+  }
+
+  let onSomeoneReady = async function(id){
     let everyoneIsReady = true
     Diagnostics.log(id + " is now ready.")
 
     const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
     for(let key in othersParticipants){
       let id = othersParticipants[key].id
-      if((await ready.get(id)).pinLastValue() >= 1){
+      if(playersReady[id]){
         continue
       }
       else {
-        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + id.split("_")[2] + "!")
+        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + id.substring(id.length-4,id.length) + "!")
         Diagnostics.log(id + " is not ready.")
         everyoneIsReady = false;
         break;
@@ -507,27 +440,12 @@ const Random = require('Random');
   const activeParticipants = await Participants.getOtherParticipantsInSameEffect();
   activeParticipants.push(self);
 
-  for(let key in activeParticipants){
-    Diagnostics.log("Participant ID : " + activeParticipants[key].id);
-    (async function () {
-      let id = activeParticipants[key].id;
-      (await        moves.get(id)).monitor().subscribe((event) => {onSomeoneMoved(       id, event)});
-      (await       scores.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, event)});
-      (await noPointsMade.get(id)).monitor().subscribe((event) => {onSomeoneScored(      id, null)});
-      (await        ready.get(id)).monitor().subscribe((event) => {onSomeoneReady(       id, event)});
-    })();
-  }
-
   (await effects.get(self.id)).monitor().subscribe((event) => {
     // Diagnostics.log("New effects for me : '" + event.newValue + "'.")
     Patches.inputs.setString('myEffects', event.newValue)
   });
 
   Patches.inputs.setString('score', "0");
-
-  (await ready.get(self.id)).increment(1);
-  (await onSomeoneReady(self.id, null));
-
 
   // --------------------------------------------------------------------------------------------
   // Get the other call participants
@@ -585,7 +503,7 @@ const Random = require('Random');
 
         Diagnostics.log("User " + participant.id + " joined the effect");
         Patches.inputs.setBoolean('canStart', false)
-        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + participant.id.split("_")[2] + "!")
+        if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + participant.id.substring(participant.id.length-4, participant.id.length) + "!")
       }
     } else {
 
@@ -598,10 +516,15 @@ const Random = require('Random');
         activeParticipants.splice(activeIndex, 1);
 
         Diagnostics.log("User " + participant.id + " left the effect");
+        playersReady[participant.id] = false
         onUserLeft(participant.id)
       }
     }
   }
+
+  scriptLoadedChannel.sendMessage({
+      "source": self.id
+  });
 
   Diagnostics.log("Game loaded for " + self.id + " !")
 })(); // Enable async/await in JS [part 2]
