@@ -21,6 +21,7 @@ const Random = require('Random');
   const effects      = await State.createGlobalPeersMap("", 'effects')
 
   var playersReady = {}
+  var playersPlaying = {}
 
   const scriptLoadedChannel = Multipeer.getMessageChannel("ScriptLoaded");
   scriptLoadedChannel.onMessage.subscribe((msg) => {
@@ -88,8 +89,6 @@ const Random = require('Random');
 
   let myScore = 0
   let allOtherScores = []
-
-  if (debug) Patches.inputs.setString('setDebugText', "Waiting for\nanother player.")
 
   let onScoreTimeOut = function(){}
   let onMoveTimeOut = function(){}
@@ -335,8 +334,10 @@ const Random = require('Random');
   });
 
   let startRound = function(){
+    let gameJustStarted = false
     if(gameIsFinished){
       Diagnostics.log("Starting game.");
+      gameJustStarted = true
       myScore = 0
       Patches.inputs.setString('score', myScore.toString());
     }
@@ -356,25 +357,28 @@ const Random = require('Random');
     Patches.inputs.setPulse('roundStarted', Reactive.once());
 
     (async function () {
-
-      const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-      let othersId = ""
-      let countOfParticipantsReady = 0
-      for(let key in othersParticipants){
-        let id = othersParticipants[key].id
-        if(playersReady[id]){
-          countOfParticipantsReady++
-          if(othersId == "")      othersId = id.substring(id.length-4,id.length)
-          else othersId = othersId + " & " + id.substring(id.length-4,id.length)
+      if (gameJustStarted){
+        const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
+        for(let key in othersParticipants){
+          let id = othersParticipants[key].id
+          if(playersReady[id]){
+            playersPlaying[id] = true
+          }
+          playersReady[id] = false
         }
+        playersPlaying[self.id] = true
       }
 
-      movesToReceiveBeforeScoring           = countOfParticipantsReady + 1
-      scoresToReceive                       = countOfParticipantsReady + 1
-      // if (debug) Patches.inputs.setString('setDebugText', "Playing with\n" + othersId)
-      Diagnostics.log("Round started with " + countOfParticipantsReady + " other participants.");
-    })();
+      let countOfParticipantsPlaying = 0
+      for(let key in playersPlaying){
+        if(playersPlaying[key]) countOfParticipantsPlaying++
+      }
 
+      movesToReceiveBeforeScoring = countOfParticipantsPlaying
+      scoresToReceive             = countOfParticipantsPlaying
+      Diagnostics.log("Round started with " + countOfParticipantsPlaying + " participants.");
+    })();
+    
     onUserLeft = function(id){
       scoresToReceive--
       onSomeoneMoved(id, "Chicken")
@@ -406,14 +410,21 @@ const Random = require('Random');
 
   let endGame = function(){
     gameIsFinished = true;
+
+    for(let key in playersPlaying){
+      playersPlaying[key] = false
+    }
+
     scriptLoadedChannel.sendMessage({ // Confirm to everyone that we are again ready to play
         "source": self.id
     });
     onSomeoneReady(self.id)
   }
 
+  let everyoneIsReady = false
+
   let onSomeoneReady = async function(id){
-    let everyoneIsReady = true
+    let canStart = true
     Diagnostics.log(id + " is now ready.")
 
     const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
@@ -425,14 +436,20 @@ const Random = require('Random');
       else {
         if (debug) Patches.inputs.setString('setDebugText', "Waiting\nplayer " + id.substring(id.length-4,id.length) + "!")
         Diagnostics.log(id + " is not ready.")
+        canStart = false;
         everyoneIsReady = false;
         break;
       }
     }
 
-    if(everyoneIsReady && othersParticipants.length > 0 && gameIsFinished){
+    if(othersParticipants.length == 0){
+      if (debug) Patches.inputs.setString('setDebugText', "Waiting for\nanother player.")
+    }
+
+    if(canStart && othersParticipants.length > 0 && gameIsFinished){
       if (debug) Patches.inputs.setString('setDebugText', "")
       Patches.inputs.setBoolean('canStart', true)
+      everyoneIsReady = true
     }
   }
 
@@ -517,6 +534,7 @@ const Random = require('Random');
 
         Diagnostics.log("User " + participant.id + " left the effect");
         playersReady[participant.id] = false
+        playersPlaying[participant.id] = false
         onUserLeft(participant.id)
       }
     }
@@ -525,6 +543,17 @@ const Random = require('Random');
   scriptLoadedChannel.sendMessage({
       "source": self.id
   });
+  onSomeoneReady(self.id)
+
+  // As long as we are not in a game, and that we can't start because someone has not confirmed they were ready, we repeat every few seconds that we are ready
+  const readyRepeater = Time.setInterval(function(){
+    if(gameIsFinished && !everyoneIsReady){
+      scriptLoadedChannel.sendMessage({
+          "source": self.id
+      });
+      onSomeoneReady(self.id)
+    }
+  }, 5000);
 
   Diagnostics.log("Game loaded for " + self.id + " !")
 })(); // Enable async/await in JS [part 2]
