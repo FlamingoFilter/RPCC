@@ -184,14 +184,13 @@ const Random = require('Random');
       }
     }
 
-    (async function () {
-      let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
-      if(win){
+    if(win){
+      (async function () {
+        let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
+        
         // Inflicts an effect
         if(effect.target == "others"){
-          const othersParticipants = await Participants.getOtherParticipantsInSameEffect();
-          for(let key in othersParticipants){
-            let id = othersParticipants[key].id
+          for(let id in playersPlaying){
             Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
             let previousEffects = (await effects.get(id)).pinLastValue();
             if(!previousEffects.includes(effect.name)) // Prevent stacking the same effect multiple times
@@ -210,8 +209,8 @@ const Random = require('Random');
           allMyPreviousEffects.shift() // Remove first
           effects.set(self.id, allMyPreviousEffects.join("|") + effect.name + "|");
         }
-      }
-    })();
+      })();
+    }
 
     Patches.inputs.setBoolean('win', win);
     Patches.inputs.setPulse('roundFinished', Reactive.once());
