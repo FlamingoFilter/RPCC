@@ -404,7 +404,7 @@ const Random = require('Random');
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
       let timer = Time.setTimeout(function(){onMoveTimeOut()}, 10000);
 
-    }, 6000);
+    }, 8000);
   };
 
   let endGame = function(){
