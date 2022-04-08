@@ -90,12 +90,12 @@ const Random = require('Random');
   let myScore = 0
   let allOtherScores = []
 
-  let onScoreTimeOut = function(){}
-  let onMoveTimeOut = function(){}
   let onUserLeft = function(id){}
 
+  let failSafeTimer
+
   let onEveryoneMoved = function(){
-    onMoveTimeOut = function(){}
+    Time.clearTimeout(failSafeTimer);
     onUserLeft = function(id){
       onSomeoneScored(id, null)
     };
@@ -114,21 +114,21 @@ const Random = require('Random');
         id : self.id,
         score : myScore
       });
-      onSomeoneScored(self.id, myScore)
 
       Patches.inputs.setString('score', myScore.toString());
       Patches.inputs.setString('pointsObtained', pointsObtained > 0 ? "+ " + pointsObtained.toString() : "- " + (-pointsObtained).toString());
       Patches.inputs.setPulse('pointsObtainedPulse', Reactive.once());
 
-      onScoreTimeOut = function() {
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      failSafeTimer = Time.setTimeout(function(){
         if(scoresToReceive > 0){
-          Diagnostics.log("6 seconds passed after scoring, some scores are still missing.")
+          Diagnostics.warning("10 seconds passed after scoring, some scores are still missing.")
           endGame()
         }
-      }
+      }, 10000);
 
-      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function(){onScoreTimeOut()}, 10000);
+      onSomeoneScored(self.id, myScore)
+
     }, 3000);
   }
 
@@ -162,6 +162,7 @@ const Random = require('Random');
   let possibleEffects = [
     {"target" : "others", "name" : "clownNose"}
    ,{"target" : "others", "name" : "drunkMarker"}
+   ,{"target" : "others", "name" : "slugEyes"}
   ]
 
   let targetFromEffect = {}
@@ -171,7 +172,7 @@ const Random = require('Random');
   }
 
   let onEveryoneScored = function(){
-    onScoreTimeOut = function(){};
+    Time.clearTimeout(failSafeTimer);
     onUserLeft = function(id){};
 
     // Winner calculation
@@ -392,17 +393,16 @@ const Random = require('Random');
         move : selection
       });
       myMove = selection;
-      onSomeoneMoved(self.id, selection)
-
-      onMoveTimeOut = function() {
+      
+      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
+      failSafeTimer = Time.setTimeout(function(){
         if(movesToReceiveBeforeScoring > 0){
-          Diagnostics.log("6 seconds passed after play, some results are still missing.")
+          Diagnostics.log("10 seconds passed after play, some results are still missing.")
           endGame()
         }
-      }
+      }, 10000);
 
-      // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
-      let timer = Time.setTimeout(function(){onMoveTimeOut()}, 10000);
+      onSomeoneMoved(self.id, selection)
 
     }, 8000);
   };
@@ -547,6 +547,7 @@ const Random = require('Random');
   // As long as we are not in a game, and that we can't start because someone has not confirmed they were ready, we repeat every few seconds that we are ready
   const readyRepeater = Time.setInterval(function(){
     if(gameIsFinished && !everyoneIsReady){
+      Diagnostics.log("The game is finished and everyone is not ready yet.")
       scriptLoadedChannel.sendMessage({
           "source": self.id
       });
