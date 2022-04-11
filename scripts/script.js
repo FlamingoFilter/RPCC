@@ -163,6 +163,7 @@ const Random = require('Random');
     {"target" : "others", "name" : "clownNose"}
    ,{"target" : "others", "name" : "drunkMarker"}
    ,{"target" : "others", "name" : "slugEyes"}
+   ,{"target" : "others", "name" : "bananas"}
   ]
 
   let targetFromEffect = {}
