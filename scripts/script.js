@@ -3,7 +3,6 @@ const Patches = require('Patches');
 const Diagnostics = require('Diagnostics');
 const Multipeer = require('Multipeer');
 const Participants = require('Participants');
-const State = require('spark-state');
 const Time = require('Time');
 const Reactive = require('Reactive');
 const Scene = require('Scene');
@@ -17,8 +16,6 @@ const Random = require('Random');
   // Get the current participant, 'self'
   const self = await Participants.self;
   Patches.inputs.setString("playerID", self.id.substring(self.id.length-4,self.id.length));
-
-  const effects      = await State.createGlobalPeersMap("", 'effects')
 
   var playersReady = {}
   var playersPlaying = {}
@@ -40,6 +37,8 @@ const Random = require('Random');
     }
   });
 
+  var myEffects = ""
+
   const moveChannel = Multipeer.getMessageChannel("move");
   moveChannel.onMessage.subscribe((msg) => {
     onSomeoneMoved(msg.id, msg.move)
@@ -53,6 +52,13 @@ const Random = require('Random');
   const roundChannel = Multipeer.getMessageChannel("round");
   roundChannel.onMessage.subscribe((msg) => {
     if(gameIsFinished) startRound()
+  });
+
+  const effectsChannel = Multipeer.getMessageChannel("effects");
+  effectsChannel.onMessage.subscribe((msg) => {
+    if(!myEffects.include(msg.effect)) myEffects += msg.effect + "|"
+    Diagnostics.log("My effects = " + myEffects + ".")
+    Patches.inputs.setString('myEffects', myEffects)
   });
 
   const selectRock     = await Patches.outputs.getPulse('selectRock');        selectRock.subscribe(() => {select("Rock"    )});
@@ -160,17 +166,12 @@ const Random = require('Random');
   };
 
   let possibleEffects = [
-    {"target" : "others", "name" : "clownNose"}
-   ,{"target" : "others", "name" : "drunkMarker"}
-   ,{"target" : "others", "name" : "slugEyes"}
-   ,{"target" : "others", "name" : "bananas"}
+    {"name" : "clownNose"}
+   ,{"name" : "drunkMarker"}
+   ,{"name" : "slugEyes"}
+   ,{"name" : "bananas"}
+   ,{"name" : "potatoes"}
   ]
-
-  let targetFromEffect = {}
-  for(let key in possibleEffects){
-    let effect = possibleEffects[key]
-    targetFromEffect[effect.name] = effect.target
-  }
 
   let onEveryoneScored = function(){
     Time.clearTimeout(failSafeTimer);
@@ -191,26 +192,15 @@ const Random = require('Random');
         let effect = possibleEffects[Math.round(1000000 * Random.random()) % possibleEffects.length]
         
         // Inflicts an effect
-        if(effect.target == "others"){
-          for(let id in playersPlaying){
-            Diagnostics.log("Inflicting effect " + effect.name + " on ID : " + id + ".");
-            let previousEffects = (await effects.get(id)).pinLastValue();
-            if(!previousEffects.includes(effect.name)) // Prevent stacking the same effect multiple times
-              effects.set(id, previousEffects + effect.name + "|");
-          }
+        effectsChannel.sendMessage({
+          effect : effect.name
+        })
 
-          let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
-          let allMyPreviousEffects = previousEffects.split("|")
-          allMyPreviousEffects.shift() // Remove first
-          effects.set(self.id, allMyPreviousEffects.join("|"));
-        }
-        else if(effect.target == "myself"){
-          Diagnostics.log("Inflicting effect " + effect.name + " on myself.");
-          let previousEffects = (await effects.get(self.id)).pinLastValue() || "";
-          let allMyPreviousEffects = previousEffects.split("|")
-          allMyPreviousEffects.shift() // Remove first
-          effects.set(self.id, allMyPreviousEffects.join("|") + effect.name + "|");
-        }
+        let allMyPreviousEffects = myEffects.split("|")
+        allMyPreviousEffects.shift() // Remove first
+        myEffects = allMyPreviousEffects.join("|");
+        Diagnostics.log("My effects = " + myEffects + ".")
+        Patches.inputs.setString('myEffects', myEffects)
       })();
     }
 
@@ -409,6 +399,7 @@ const Random = require('Random');
   };
 
   let endGame = function(){
+    Time.clearTimeout(failSafeTimer);
     gameIsFinished = true;
 
     for(let key in playersPlaying){
@@ -456,11 +447,6 @@ const Random = require('Random');
   // Get the other call participants
   const activeParticipants = await Participants.getOtherParticipantsInSameEffect();
   activeParticipants.push(self);
-
-  (await effects.get(self.id)).monitor().subscribe((event) => {
-    // Diagnostics.log("New effects for me : '" + event.newValue + "'.")
-    Patches.inputs.setString('myEffects', event.newValue)
-  });
 
   Patches.inputs.setString('score', "0");
 
