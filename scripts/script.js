@@ -128,7 +128,7 @@ const Random = require('Random');
       // Failsafe : in case some user left the filter or lost the connection during a round, we will stop waiting for its result after a few seconds
       failSafeTimer = Time.setTimeout(function(){
         if(scoresToReceive > 0){
-          Diagnostics.warning("10 seconds passed after scoring, some scores are still missing.")
+          Diagnostics.warn("10 seconds passed after scoring, some scores are still missing.")
           endGame()
         }
       }, 10000);
