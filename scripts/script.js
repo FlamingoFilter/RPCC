@@ -56,7 +56,7 @@ const Random = require('Random');
 
   const effectsChannel = Multipeer.getMessageChannel("effects");
   effectsChannel.onMessage.subscribe((msg) => {
-    if(!myEffects.include(msg.effect)) myEffects += msg.effect + "|"
+    if(!myEffects.includes(msg.effect)) myEffects += msg.effect + "|"
     Diagnostics.log("My effects = " + myEffects + ".")
     Patches.inputs.setString('myEffects', myEffects)
   });
